@@ -66,3 +66,7 @@ Windows-установщик и публикация Releases подтвержд
 Discord Application Console Link зарегистрировано владельцем: Public Client включен, loopback redirect сохранен. PKCE, callback validation, отмена, secret redaction, account gate и временные ошибки покрыты тестами. Реальный consent/code exchange, Keychain, refresh/revoke и статус в настольном Discord пока не подтверждены.
 
 Снимки интерфейса используют собственный renderer без доступа к Keychain и пользовательским настройкам. Диагностические кадры и циклы режимов окна не заменяют аппаратный захват. Обновлены уведомления для 302 зависимостей двух целевых платформ, включая OAuth/native TLS и Inter OFL.
+
+Поставка подтверждена в [Native builds #3](https://github.com/Potanull/console-link/actions/runs/42678726910), исходный коммит `e50261f51649747d738167749713f2c434177769`. Все задания success: macOS arm64, Windows MSVC, тесты, Clippy, упаковка, установка/повторная установка/удаление Windows и публикация.
+
+[Предварительный релиз v0.3.0](https://github.com/Potanull/console-link/releases/tag/v0.3.0) содержит Mac ZIP, Windows installer, portable ZIP и SHA256SUMS.txt. Все четыре файла скачаны через публичные ссылки. SHA256 фактических байтов совпали с manifest и GitHub asset digest. ZIP проверены на целостность и наличие бинарников/лицензий, Mac Info.plist подтверждает 0.3.0 build 4. Реальная авторизация Discord и аппаратная приемка остаются открытыми.

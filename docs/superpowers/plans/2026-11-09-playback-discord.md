@@ -35,6 +35,8 @@
 - [x] Implement PKCE worker, credential store, account-matched IPC and callback tests.
 - [x] Integrate auth UI after gameplay changes stabilize.
 - [ ] Validate actual owner consent/code exchange; owner has not tested yet.
-- [ ] Independently review, run native checks and publish a downloadable updated build.
+- [x] Independently review, run native checks and publish a downloadable updated build.
+
+Delivered prerelease v0.3.0: https://github.com/Potanull/console-link/releases/tag/v0.3.0. CI https://github.com/Potanull/console-link/actions/runs/42678726910 passed both OSes and Windows installer lifecycle. All public assets downloaded and SHA256 verified. Actual owner OAuth grant and hardware capture remain unverified.
 
 Game recognition is a documented proposal; no inert feature toggle or fake automatic recognition is shipped.

@@ -31,7 +31,8 @@
 - [ ] Discord Presence с зарегистрированным Application ID.
 - [ ] Discord-звонок на Mac: принимающая сторона видит игру и слышит консоль; volume/mute ведут себя ожидаемо.
 - [ ] Аналогичный Discord-звонок и аппаратный прогон на Windows 11.
-- [ ] Нативный Windows MSVC build/test в GitHub Actions.
+- [x] Нативный Windows MSVC build/test/package в GitHub Actions.
+- [x] macOS arm64 build/test/package в GitHub Actions.
 
 ## Ограничения реализации
 
@@ -45,3 +46,7 @@
 - Сквозная работоспособность не доказана одними unit tests, cross-check и code review.
 
 Зависимость block 0.1.6 сообщает предупреждение future-incompatibility текущего Rust. Сборку оно не блокирует; обновление цепочки зависимостей требуется до перехода на будущую несовместимую версию компилятора. Cargo.lock фиксирует windows 0.58.0 для gpu-allocator, совместимую с wgpu-hal; широкое ограничение allocator иначе может выбрать несовместимую windows 0.54.0 из аудиозависимостей.
+
+## Подтверждение CI
+
+[Native builds #1](https://github.com/Potanull/console-link/actions/runs/42643094504), исходный коммит `231e498acb43bd7e72748d86e06de6b708df8ea7`: оба задания завершились success, включая Formatting, Clippy, Tests, release packaging и upload artifacts. Это не аппаратный прогон и не проверка реального звонка.

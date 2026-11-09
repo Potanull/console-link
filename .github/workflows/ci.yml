@@ -12,10 +12,10 @@ on:
         required: true
         default: false
       release_tag:
-        description: Release tag matching Cargo.toml (for example v0.3.0)
+        description: Release tag matching Cargo.toml (for example v0.3.1)
         type: string
         required: true
-        default: v0.3.0
+        default: v0.3.1
 
 permissions:
   contents: read

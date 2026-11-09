@@ -1,5 +1,5 @@
 use crate::{
-    playback::{self, FramePacer, PlaybackState},
+    playback::{self, FramePacer, GameFeedback, PlaybackState},
     shortcuts::{self, Action},
     theme::{self, Icon},
 };
@@ -95,6 +95,7 @@ pub struct ConsoleApp {
     started_unix: i64,
     playback: PlaybackState,
     frame_pacer: FramePacer,
+    feedback: GameFeedback,
     menu_geometry: Option<WindowGeometry>,
     game_geometry: Option<WindowGeometry>,
     pending_geometry: Option<WindowGeometry>,
@@ -138,7 +139,7 @@ impl ConsoleApp {
         let snapshot_game = snapshot_path.is_some()
             && matches!(
                 argument_value("--ui-page").as_deref(),
-                Some("overlay" | "gameplay")
+                Some("overlay" | "gameplay" | "volume")
             );
         let snapshot_game = snapshot_game || snapshot_cycle;
         let page = match argument_value("--ui-page").as_deref() {
@@ -189,6 +190,7 @@ impl ConsoleApp {
             started_unix: 0,
             playback: PlaybackState::default(),
             frame_pacer: FramePacer::default(),
+            feedback: GameFeedback::default(),
             menu_geometry: None,
             game_geometry: None,
             pending_geometry: None,
@@ -212,6 +214,9 @@ impl ConsoleApp {
             snapshot_path,
             snapshot_requested: false,
         };
+        if argument_value("--ui-page").as_deref() == Some("volume") && app.snapshot_path.is_some() {
+            app.feedback.volume_changed(0.0);
+        }
         if snapshot_game {
             app.settings.game_window_mode = match argument_value("--ui-game-mode").as_deref() {
                 Some("fullscreen") => GameWindowMode::Fullscreen,
@@ -1288,7 +1293,7 @@ impl ConsoleApp {
                 }
             });
             ui.add_space(8.0);
-            theme::subtitle(ui, if locked { "Изменить режим захвата можно после завершения сеанса." } else { "Предпочитаем указанный FPS, затем лучшее доступное разрешение. Недоступные карте 60 FPS не имитируются." });
+            theme::subtitle(ui, if locked { "Изменить режим захвата можно после завершения сеанса." } else { "По умолчанию Full HD (1920 × 1080), затем ближайший доступный FPS. Если Full HD нет, выберем доступный режим карты." });
         });
         self.refresh_capture_mode();
     }
@@ -1439,6 +1444,60 @@ impl ConsoleApp {
             audio.set_muted(self.settings.muted);
         }
         self.dirty = Some(Instant::now());
+    }
+
+    fn volume_feedback(&self, ctx: &egui::Context) {
+        egui::Area::new(egui::Id::new("volume-feedback"))
+            .order(egui::Order::Tooltip)
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -60.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(theme::BACKGROUND)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .corner_radius(16)
+                    .inner_margin(18)
+                    .show(ui, |ui| {
+                        ui.set_width(230.0);
+                        ui.horizontal(|ui| {
+                            theme::icon(ui, Icon::Audio, 20.0, theme::TEXT);
+                            ui.label(
+                                RichText::new(if self.settings.muted {
+                                    "Звук выключен".into()
+                                } else {
+                                    format!("Громкость  {:.0}%", self.settings.gain * 100.0)
+                                })
+                                .size(17.0)
+                                .strong(),
+                            );
+                        });
+                        ui.add_space(10.0);
+                        let (track, _) =
+                            ui.allocate_exact_size(egui::vec2(230.0, 6.0), egui::Sense::hover());
+                        ui.painter().rect_filled(track, 3, theme::BORDER);
+                        let gain = if self.settings.muted {
+                            0.0
+                        } else {
+                            self.settings.gain
+                        };
+                        let end = track.left() + track.width() * gain;
+                        if gain > 0.0 {
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_max(
+                                    track.min,
+                                    egui::pos2(end, track.bottom()),
+                                ),
+                                3,
+                                theme::TEXT,
+                            );
+                        }
+                        ui.painter().circle_filled(
+                            egui::pos2(end, track.center().y),
+                            5.0,
+                            theme::TEXT,
+                        );
+                    });
+            });
     }
 
     fn game_scene(&mut self, ctx: &egui::Context) {
@@ -1775,6 +1834,7 @@ impl eframe::App for ConsoleApp {
             self.stop();
             self.snapshot_game = false;
         }
+        let previous_volume = (self.settings.gain, self.settings.muted);
         self.events(ctx);
         self.refresh_capture_mode();
         self.synchronize_presentation(ctx);
@@ -1786,6 +1846,29 @@ impl eframe::App for ConsoleApp {
             self.game_scene(ctx);
         } else {
             self.controls(ctx);
+        }
+        let now = ctx.input(|input| input.time);
+        if previous_volume != (self.settings.gain, self.settings.muted) {
+            self.feedback.volume_changed(now);
+        }
+        if self.feedback.volume_visible(now) {
+            self.volume_feedback(ctx);
+        }
+        let (focused, moved) = ctx.input(|input| {
+            (
+            input.focused,
+            input.events.iter().any(|event| matches!(event, egui::Event::PointerMoved(_))
+                || matches!(event, egui::Event::MouseMoved(delta) if *delta != egui::Vec2::ZERO)),
+        )
+        });
+        if self.feedback.hide_cursor(
+            now,
+            self.active.is_some() || self.snapshot_game,
+            self.playback.overlay_open,
+            focused,
+            moved,
+        ) {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
         }
         ctx.request_repaint_after(if self.active.is_some() {
             self.frame_pacer.repaint_after(

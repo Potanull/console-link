@@ -6,15 +6,15 @@
 
 ![Интерфейс Console Link](assets/ui-preview.png)
 
-## Скачать 0.3.0
+## Скачать 0.3.1
 
 | Платформа | Файл |
 |---|---|
-| Windows 11 x64 | [Установщик](https://github.com/Potanull/console-link/releases/download/v0.3.0/Console-Link-0.3.0-Setup-x64.exe) |
-| macOS Apple Silicon | [Приложение в ZIP](https://github.com/Potanull/console-link/releases/download/v0.3.0/console-link-0.3.0-macos-arm64.zip) |
-| Windows x64 без установки | [Portable ZIP](https://github.com/Potanull/console-link/releases/download/v0.3.0/console-link-0.3.0-windows-x64.zip) |
+| Windows 11 x64 | [Установщик](https://github.com/Potanull/console-link/releases/download/v0.3.1/Console-Link-0.3.1-Setup-x64.exe) |
+| macOS Apple Silicon | [Приложение в ZIP](https://github.com/Potanull/console-link/releases/download/v0.3.1/console-link-0.3.1-macos-arm64.zip) |
+| Windows x64 без установки | [Portable ZIP](https://github.com/Potanull/console-link/releases/download/v0.3.1/console-link-0.3.1-windows-x64.zip) |
 
-[Страница релиза](https://github.com/Potanull/console-link/releases/tag/v0.3.0) · [SHA256SUMS](https://github.com/Potanull/console-link/releases/download/v0.3.0/SHA256SUMS.txt)
+[Страница релиза](https://github.com/Potanull/console-link/releases/tag/v0.3.1) · [SHA256SUMS](https://github.com/Potanull/console-link/releases/download/v0.3.1/SHA256SUMS.txt)
 
 Windows-установщик устанавливает приложение для текущего пользователя, добавляет меню Пуск и штатное удаление. Значок рабочего стола необязателен. Обязательные права администратора не требуются. На Mac распакуй ZIP и перенеси `Console Link.app` в «Программы».
 
@@ -22,10 +22,11 @@ Windows-установщик устанавливает приложение д�
 
 ## Возможности
 
-- Выбор карты и автоматический выбор ее реального режима, по умолчанию до 60 FPS. Частота важнее разрешения: 720p60 предпочтительнее 1080p30. Ручной выбор доступен в настройках.
+- Выбор карты и автоматический выбор ее реального режима, по умолчанию до 60 FPS. Full HD имеет приоритет: 1080p30 предпочтительнее 720p60; внутри разрешения выбирается ближайший доступный FPS с учетом лимита. Ручной выбор доступен в настройках.
 - Во время игры главное меню сменяется изображением консоли. F1 открывает боковую панель настроек поверх игры. Остановка или закрытие игры возвращает главное меню.
 - Обычный оконный режим, окно без рамок и полный экран. Пропорции изображения сохраняются.
 - Выбор аудиовхода карты и выхода, громкость, mute, индикатор уровня и коррекция синхронизации от -500 до +500 мс. Отрицательная коррекция добавляет видеозадержку и ограничивается памятью.
+- Индикатор громкости поверх игры на 2 секунды при изменении громкости или mute. Курсор скрывается после 4 секунд без движения во время игры; настройки оставляют его видимым.
 - Скриншоты PNG без элементов интерфейса.
 - Ручное название игры в Discord Rich Presence; интеграция необязательна и не влияет на захват.
 - Восстановление после потери ранее подключенного устройства. Ручное отключение отменяет повторы.

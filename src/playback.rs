@@ -62,6 +62,41 @@ impl PlaybackState {
     }
 }
 
+/// Transient UI feedback uses the UI clock, independent of capture FPS.
+#[derive(Default)]
+pub struct GameFeedback {
+    cursor_active: bool,
+    last_motion: f64,
+    volume_changed: Option<f64>,
+}
+
+impl GameFeedback {
+    pub fn hide_cursor(
+        &mut self,
+        now: f64,
+        playing: bool,
+        controls_open: bool,
+        focused: bool,
+        moved: bool,
+    ) -> bool {
+        let active = playing && !controls_open && focused;
+        if !active || !self.cursor_active || moved {
+            self.last_motion = now;
+        }
+        self.cursor_active = active;
+        active && now - self.last_motion >= 4.0
+    }
+
+    pub fn volume_changed(&mut self, now: f64) {
+        self.volume_changed = Some(now);
+    }
+
+    pub fn volume_visible(&self, now: f64) -> bool {
+        self.volume_changed
+            .is_some_and(|changed| now - changed < 2.0)
+    }
+}
+
 #[derive(Default)]
 pub struct FramePacer {
     last_presented_ns: Option<u64>,
@@ -130,6 +165,33 @@ pub fn mode_label(mode: GameWindowMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_hides_after_four_seconds_and_returns_for_motion_controls_or_focus() {
+        let mut feedback = GameFeedback::default();
+        assert!(!feedback.hide_cursor(10.0, true, false, true, false));
+        assert!(!feedback.hide_cursor(13.99, true, false, true, false));
+        assert!(feedback.hide_cursor(14.0, true, false, true, false));
+        assert!(!feedback.hide_cursor(14.1, true, false, true, true));
+        assert!(feedback.hide_cursor(18.1, true, false, true, false));
+        assert!(!feedback.hide_cursor(19.0, true, true, true, false));
+        assert!(!feedback.hide_cursor(20.0, true, false, true, false));
+        assert!(!feedback.hide_cursor(25.0, true, false, false, false));
+        assert!(!feedback.hide_cursor(26.0, true, false, true, false));
+        assert!(!feedback.hide_cursor(40.0, false, false, true, false));
+        assert!(!feedback.hide_cursor(50.0, true, false, true, false));
+    }
+
+    #[test]
+    fn volume_feedback_expires_and_each_change_extends_it() {
+        let mut feedback = GameFeedback::default();
+        assert!(!feedback.volume_visible(0.0));
+        feedback.volume_changed(10.0);
+        assert!(feedback.volume_visible(11.99));
+        feedback.volume_changed(11.9);
+        assert!(feedback.volume_visible(13.8));
+        assert!(!feedback.volume_visible(13.91));
+    }
 
     fn count_presentations(source_hz: u64, target_fps: u32, seconds: u64, jitter: bool) -> u64 {
         let mut pacer = FramePacer::default();

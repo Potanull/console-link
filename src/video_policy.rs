@@ -47,8 +47,10 @@ pub fn choose_mode(
                     distance
                 }
             };
+            let full_hd = |mode: &VideoMode| mode.width == 1920 && mode.height == 1080;
             (a_fps > target)
                 .cmp(&(b_fps > target))
+                .then_with(|| full_hd(b).cmp(&full_hd(a)))
                 .then_with(|| family_distance(a_fps).total_cmp(&family_distance(b_fps)))
                 .then_with(|| area(b).cmp(&area(a)))
                 .then_with(|| b.width.cmp(&a.width))
@@ -121,15 +123,15 @@ mod tests {
     }
 
     #[test]
-    fn prefers_sixty_fps_over_higher_resolution_at_thirty() {
-        let fast = mode(1280, 720, 60, 1);
+    fn defaults_to_full_hd_even_when_lower_resolution_offers_sixty() {
+        let full_hd = mode(1920, 1080, 30, 1);
         assert_eq!(
             choose_mode(
-                &[mode(1920, 1080, 30, 1), fast.clone()],
+                &[full_hd.clone(), mode(1280, 720, 60, 1)],
                 &CapturePreferences::default(),
                 None
             ),
-            Some(fast)
+            Some(full_hd)
         );
     }
 
@@ -186,6 +188,15 @@ mod tests {
                 None
             ),
             Some(thirty)
+        );
+        let lower_resolution = mode(1280, 720, 30, 1);
+        assert_eq!(
+            choose_mode(
+                &[mode(1920, 1080, 60, 1), lower_resolution.clone()],
+                &preferences,
+                None
+            ),
+            Some(lower_resolution)
         );
         let twenty_five = mode(1920, 1080, 25, 1);
         assert_eq!(

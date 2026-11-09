@@ -39,12 +39,12 @@ Owner: packaging/windows.iss, scripts/package-windows.ps1, .github/workflows, re
 
 - [x] Implement Windows installer and package script.
 - [x] Implement manual release workflow and asset checksums.
-- [ ] Validate installer on Windows CI.
+- [x] Validate installer on Windows CI.
 
 ### Task 3: Integration and delivery
 
 Owner: root, Cargo version, Info.plist, README and validation docs. Bump0.2.0; independent reviewer checks presentation/state and packaging/version consistency. Run existing suite, fix material defects, publish source, dispatch release and follow to completion. Read back release assets and checksums.
 
 - [x] Bump versions, update docs, integrate and independently review.
-- [ ] Run tests/lints/native smoke and publish source.
-- [ ] Dispatch release, inspect native CI results and public release assets.
+- [x] Run tests/lints/native smoke and publish source.
+- [x] Dispatch release, inspect native CI results and public release assets.

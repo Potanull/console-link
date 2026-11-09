@@ -55,4 +55,6 @@
 
 Переработаны визуальные компоненты; media lifecycle сохранен. Независимое ревью не выявило новых P1/P2. Визуально проверены собственные renderer-снимки обычного и компактного окон, страницы звука/Discord/настроек. Snapshot-режим не читает и не сохраняет пользовательские настройки. Локально прошли 33 теста, форматирование, Clippy на Mac и Windows cross-target и реальный smoke launch/exit Mac .app0.2.0. Inter OFL включен в поставку.
 
-Windows-установщик и публикация Releases проверяются в отдельном вручную запущенном native CI. Аппаратная приемка остается открытой.
+Windows-установщик и публикация Releases подтверждены в [Native builds #2](https://github.com/Potanull/console-link/actions/runs/42667922070), исходный коммит cdcb375bd1316ce71e46756ab88427de8936fd87. Все задания success. Windows smoke проверил установку без admin, отсутствие отдельного VC runtime в PE imports, запуск CLI, повторную установку с прежним AppId, ярлык/регистрацию, сохранность пользовательского sentinel и удаление managed files.
+
+[Предварительный релиз v0.2.0](https://github.com/Potanull/console-link/releases/tag/v0.2.0) опубликован: Mac ZIP, Windows installer, portable ZIP и SHA256SUMS.txt. Все файлы скачаны через публичные ссылки; SHA256 фактических байтов сверены с manifest и GitHub asset digest. Проверены содержимое архивов, версии и наличие лицензионных уведомлений. Аппаратная приемка остается открытой.

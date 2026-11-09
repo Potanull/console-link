@@ -8,3 +8,7 @@
 - Независимое ревью и регрессионные исправления выполнены. Проверены 33 Mac tests, Clippy Mac/Windows cross-target, настоящий запуск .app с Metal.
 - Код опубликован: https://github.com/Potanull/console-link. Native macOS и Windows MSVC CI завершились success: https://github.com/Potanull/console-link/actions/runs/42643094504.
 - Аппаратная приемка и реальный Discord-звонок остаются открытыми: см. validation.md.
+
+## Релиз 0.2.0
+
+Новый UI, bundled Inter, Windows per-user installer и публичные downloads опубликованы: https://github.com/Potanull/console-link/releases/tag/v0.2.0. Нативная матрица и install/reinstall/uninstall smoke success: https://github.com/Potanull/console-link/actions/runs/42667922070. Публичные файлы скачаны и сверены по SHA256.

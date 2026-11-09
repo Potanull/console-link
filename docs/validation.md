@@ -98,3 +98,7 @@ Discord SET_ACTIVITY подтверждается ответом с провер
 Собственный renderer проверен с явно заданным тестовым профилем в обычном и компактном окне. Загружены публичный стандартный Discord avatar и Nintendo cover; fixture не является фактом живой авторизации.
 
 Открытые проверки: реальная карта/титульный экран Switch, точность на реальных кадрах, ресурсный прогон OCR, фактические имя/обложка в настольном Discord, браузерный OAuth-return и Windows native activation. Публичный API Discord не позволяет начать Go Live или принудительно показать его stream prompt: приложение предоставляет собственную подсказку и переход в Discord, пользователь выбирает звонок/окно/звук.
+
+[Native builds #6](https://github.com/Potanull/console-link/actions/runs/42691053403), исходный коммит `b96d49be5a783f1df426598b30c79bed59fdb330`: все задания success. Windows MSVC и Mac arm64 прошли Clippy/tests, release packaging и upload; Windows дополнительно install/reinstall/uninstall, сохранность пользовательского sentinel и регистрацию/удаление tokenless URL protocol. Mac runner начал работу после ожидания свободной емкости.
+
+[Предварительный релиз v0.4.0](https://github.com/Potanull/console-link/releases/tag/v0.4.0) опубликован: Mac ZIP, Windows installer, portable ZIP и SHA256SUMS.txt. Все четыре файла скачаны публично; SHA256 фактических байтов совпали с manifest и GitHub asset digest. Проверены ZIP integrity, бинарники, лицензии и Mac Info.plist 0.4.0 build 6. Пользователь ответил, что живую проверку пока не выполнял; аппаратные/Discord пункты остаются открытыми.

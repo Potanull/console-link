@@ -1,0 +1,63 @@
+name: Native builds
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust components
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+          rustup target add ${{ matrix.target }}
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --target ${{ matrix.target }} -- -D warnings
+      - name: Tests
+        timeout-minutes: 5
+        run: cargo test --locked --target ${{ matrix.target }}
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: bash scripts/package-macos.sh
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --locked --release --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/console-link.exe dist/
+          Copy-Item LICENSE dist/
+          Copy-Item README.md dist/
+          Copy-Item THIRD_PARTY.md dist/
+          Copy-Item THIRD_PARTY_LICENSES.txt dist/
+          Compress-Archive -Path dist/console-link.exe,dist/LICENSE,dist/README.md,dist/THIRD_PARTY.md,dist/THIRD_PARTY_LICENSES.txt -DestinationPath dist/console-link-windows-x64.zip -Force
+      - name: Upload macOS application
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-link-macos-arm64
+          path: dist/console-link-macos-arm64.zip
+      - name: Upload Windows application
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-link-windows-x64
+          path: dist/console-link-windows-x64.zip

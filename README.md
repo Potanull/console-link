@@ -4,7 +4,21 @@
 
 Специализированное desktop-приложение для подключения HDMI-консоли к компьютеру через карту захвата. Rust, macOS и Windows 11, без внешнего медиаплеера и media runtime.
 
-**Стадия: первая реализация для аппаратной проверки.** Сборка и тесты не подтверждают совместимость конкретной карты, задержку или передачу звука в реальном звонке Discord. Актуальные проверки и ограничения: [docs/validation.md](docs/validation.md).
+![Интерфейс Console Link](assets/ui-preview.png)
+
+## Скачать 0.2.0
+
+| Платформа | Файл |
+|---|---|
+| Windows 11 x64 | [Установщик](https://github.com/Potanull/console-link/releases/download/v0.2.0/Console-Link-0.2.0-Setup-x64.exe) |
+| macOS Apple Silicon | [Приложение в ZIP](https://github.com/Potanull/console-link/releases/download/v0.2.0/console-link-0.2.0-macos-arm64.zip) |
+| Windows x64 без установки | [Portable ZIP](https://github.com/Potanull/console-link/releases/download/v0.2.0/console-link-0.2.0-windows-x64.zip) |
+
+[Страница релиза](https://github.com/Potanull/console-link/releases/tag/v0.2.0) · [SHA256SUMS](https://github.com/Potanull/console-link/releases/download/v0.2.0/SHA256SUMS.txt)
+
+Windows-установщик устанавливает приложение для текущего пользователя, добавляет меню Пуск и штатное удаление. Значок рабочего стола необязателен. Обязательные права администратора не требуются. На Mac распакуй ZIP и перенеси `Console Link.app` в «Программы».
+
+**Предварительный релиз для аппаратной проверки.** Сборка и тесты не подтверждают совместимость конкретной карты, задержку или передачу звука в реальном звонке Discord. Актуальные проверки и ограничения: [docs/validation.md](docs/validation.md).
 
 ## Возможности
 
@@ -61,7 +75,7 @@ cargo build --locked --release --target x86_64-pc-windows-msvc
 .\target\x86_64-pc-windows-msvc\release\console-link.exe
 ```
 
-GitHub Actions собирает обе платформы и сохраняет тестовые архивы в artifacts. Подписанного Windows-релиза пока нет. Intel Mac и Windows ARM в первую проверяемую матрицу не входят.
+GitHub Actions собирает обе платформы, проверяет Windows install/uninstall в одноразовом каталоге и публикует готовые файлы в Releases при ручном запуске публикации. Windows-установщик не подписан сертификатом разработчика, Mac-пакет без notarization. Intel Mac и Windows ARM в первую проверяемую матрицу не входят.
 
 ## Внутреннее устройство
 

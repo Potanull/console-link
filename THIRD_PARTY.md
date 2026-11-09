@@ -243,3 +243,7 @@
 | zmij | 1.0.23 | MIT | 23f18e03dc49 |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | d30047bca3b5, d201d14804d3, c71d239df917 |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib | c71d239df917, d201d14804d3, d30047bca3b5 |
+
+## Шрифт
+
+Inter Variable, SIL Open Font License 1.1. Источник: https://github.com/rsms/inter. Полный текст: assets/fonts/Inter-OFL.txt и THIRD_PARTY_LICENSES.txt.

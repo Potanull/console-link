@@ -1,3 +1,4 @@
+use crate::theme::{self, Icon};
 use console_link::{
     audio::{self, AudioConfig, AudioDeviceInfo, AudioEngine},
     discord::{DiscordWorker, Presence},
@@ -14,6 +15,14 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Session,
+    Audio,
+    Discord,
+    Settings,
+}
 
 const HISTORY_BUDGET: usize = 320 * 1024 * 1024;
 
@@ -42,7 +51,7 @@ enum Event {
 
 pub struct ConsoleApp {
     settings: Settings,
-    store: SettingsStore,
+    store: Option<SettingsStore>,
     devices: Devices,
     tx: Sender<Event>,
     rx: Receiver<Event>,
@@ -72,12 +81,38 @@ pub struct ConsoleApp {
     reconnect: RetryPolicy,
     retry_refresh: bool,
     recovery_attempt: bool,
+    page: Page,
+    brand: egui::TextureHandle,
+    snapshot_path: Option<std::path::PathBuf>,
+    snapshot_requested: bool,
 }
 
 impl ConsoleApp {
     pub fn new(context: &eframe::CreationContext<'_>) -> Self {
-        context.egui_ctx.set_visuals(egui::Visuals::dark());
-        let (store, settings, warning) = SettingsStore::open();
+        theme::install(&context.egui_ctx);
+        let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/window-icon.png"))
+            .expect("embedded icon");
+        let brand = context.egui_ctx.load_texture(
+            "console-link-brand",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            ),
+            egui::TextureOptions::LINEAR,
+        );
+        let snapshot_path = argument_value("--ui-snapshot").map(std::path::PathBuf::from);
+        let page = match argument_value("--ui-page").as_deref() {
+            Some("audio") => Page::Audio,
+            Some("discord") => Page::Discord,
+            Some("settings") => Page::Settings,
+            _ => Page::Session,
+        };
+        let (store, settings, warning) = if snapshot_path.is_some() {
+            (None, Settings::default(), None)
+        } else {
+            let (store, settings, warning) = SettingsStore::open();
+            (Some(store), settings, warning)
+        };
         let (tx, rx) = bounded(16);
         let (frames_tx, frames_rx) = bounded(3);
         let mut app = Self {
@@ -117,6 +152,10 @@ impl ConsoleApp {
             reconnect: RetryPolicy::default(),
             retry_refresh: false,
             recovery_attempt: false,
+            page,
+            brand,
+            snapshot_path,
+            snapshot_requested: false,
         };
         app.refresh(context.egui_ctx.clone());
         app
@@ -424,7 +463,9 @@ impl ConsoleApp {
             .is_some_and(|since| since.elapsed() > Duration::from_millis(700))
         {
             self.dirty = None;
-            if let Err(error) = self.store.save(&self.settings) {
+            if let Some(store) = &self.store
+                && let Err(error) = store.save(&self.settings)
+            {
                 self.notice = Some(error);
             }
         }
@@ -481,74 +522,565 @@ impl ConsoleApp {
 
     fn controls(&mut self, ctx: &egui::Context) {
         let before = serde_json::to_string(&self.settings).unwrap_or_default();
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(12.0); ui.heading(RichText::new("Console Link").size(30.0));
-                ui.label(RichText::new("Консоль на твоем компьютере").color(Color32::from_gray(160))); ui.add_space(18.0);
-                let running = self.active.is_some();
-                ui.horizontal(|ui| { ui.colored_label(if running { Color32::from_rgb(99,210,155) } else { Color32::GRAY }, if running { "● Подключено" } else if self.opening { "● Подключение…" } else { "● Не подключено" }); if self.refreshing { ui.spinner(); } });
-                if let Some(error) = &self.error { ui.add_space(8.0); ui.colored_label(Color32::from_rgb(255,140,130), error); }
-                if let Some(notice) = &self.notice { ui.label(notice); }
-                for warning in &self.devices.warnings { ui.colored_label(Color32::YELLOW, warning); }
-                ui.add_space(14.0); ui.separator(); ui.add_space(8.0);
-                ui.add_enabled_ui(!running && !self.opening, |ui| {
-                    ui.strong("1. Карта захвата");
-                    let selected = self.devices.video.iter().find(|d| d.id == self.settings.video_id).map(|d| d.name.as_str()).unwrap_or("Выбери устройство");
-                    let previous = self.settings.video_id.clone();
-                    egui::ComboBox::from_id_salt("video").selected_text(selected).width(420.0).show_ui(ui, |ui| { for device in &self.devices.video { ui.selectable_value(&mut self.settings.video_id, device.id.clone(), &device.name); } });
-                    if previous != self.settings.video_id { self.settings.mode = None; }
-                    if self.devices.video.is_empty() { ui.label("Подключи HDMI к консоли, USB карты к компьютеру и обнови список."); }
-                    if let Some(device) = self.devices.video.iter().find(|d| d.id == self.settings.video_id) {
-                        if self.settings.mode.is_none() { self.settings.mode = device.modes.iter().find(|m| m.width == 1920 && m.height == 1080 && m.fps_num as f64 / m.fps_den.max(1) as f64 >= 59.0).or_else(|| device.modes.first()).cloned(); }
-                        egui::ComboBox::from_id_salt("mode").selected_text(self.settings.mode.as_ref().map(ToString::to_string).unwrap_or_else(|| "Нет доступных режимов".into())).width(420.0).show_ui(ui, |ui| { for mode in &device.modes { ui.selectable_value(&mut self.settings.mode, Some(mode.clone()), mode.to_string()); } });
-                    }
-                    if ui.button("Обновить устройства").clicked() { self.refresh(ctx.clone()); }
-                    ui.add_space(14.0); ui.strong("2. Звук консоли");
-                    audio_combo(ui, "audio-in", "Вход карты", &mut self.settings.audio_input_id, &self.devices.inputs);
-                    audio_combo(ui, "audio-out", "Наушники / выход", &mut self.settings.audio_output_id, &self.devices.outputs);
-                    ui.small("Выбери аудиовход карты, не микрофон. Для видео без звука оставь оба поля пустыми.");
-                });
-                ui.add_space(12.0);
-                let gain_changed = ui.add(egui::Slider::new(&mut self.settings.gain, 0.0..=1.0).text("Громкость").custom_formatter(|v, _| format!("{:.0}%", v * 100.0))).changed();
-                let mute_changed = ui.checkbox(&mut self.settings.muted, "Без звука").changed();
-                let peak = self.active.as_ref().and_then(|a| a.audio.as_ref()).map(AudioEngine::peak).unwrap_or(0.0);
-                ui.add(egui::ProgressBar::new(peak.clamp(0.0,1.0)).text("Уровень звука"));
-                let offset_changed = ui.add(egui::Slider::new(&mut self.settings.sync_ms, -500..=500).text("Синхронизация, мс")).changed();
-                ui.small("+ задерживает звук · - задерживает видео. Коррекция увеличивает задержку.");
-                if let Some(audio) = self.active.as_ref().and_then(|a| a.audio.as_ref()) {
-                    if gain_changed { audio.set_gain(self.settings.gain); }
-                    if mute_changed { audio.set_muted(self.settings.muted); }
-                    if offset_changed { audio.set_delay_ms(self.settings.sync_ms.max(0) as u32); }
-                }
-                if offset_changed { self.history.clear(); self.displayed = None; self.texture = None; }
-                ui.add_space(16.0);
+        let compact = ctx.content_rect().width() < 900.0;
+        let running = self.active.is_some();
+        let status = if running {
+            "Подключено"
+        } else if self.opening {
+            "Подключение"
+        } else if self.reconnect.active() {
+            "Ожидание карты"
+        } else {
+            "Не подключено"
+        };
+
+        egui::SidePanel::left("navigation")
+            .exact_width(if compact { 74.0 } else { 204.0 })
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SIDEBAR)
+                    .inner_margin(egui::Margin::symmetric(14, 24)),
+            )
+            .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if running || self.opening || self.reconnect.active() { if ui.button("Отключить").clicked() { self.stop(); } }
-                    else if ui.add_enabled(!self.refreshing, egui::Button::new("Подключить консоль").min_size(egui::vec2(200.0,36.0))).clicked() { self.connect(ctx.clone()); }
-                    if ui.add_enabled(self.displayed.is_some() && !self.screenshot_pending, egui::Button::new("Скриншот")).clicked() { self.screenshot(ctx.clone()); }
+                    ui.add(egui::Image::new(&self.brand).fit_to_exact_size(egui::vec2(42.0, 42.0)));
+                    if !compact {
+                        ui.vertical(|ui| {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Console Link").size(15.0).strong());
+                            theme::label(ui, "ИГРА БЛИЖЕ");
+                        });
+                    }
                 });
-                ui.add_space(12.0); ui.separator(); ui.add_space(8.0);
-                ui.collapsing("Discord", |ui| {
-                    ui.checkbox(&mut self.settings.discord_enabled, "Показывать игру в Discord");
-                    ui.label("Название игры"); ui.add(egui::TextEdit::singleline(&mut self.settings.game).char_limit(128).hint_text("Например, The Legend of Zelda"));
-                    ui.label("Discord Application ID"); ui.add(egui::TextEdit::singleline(&mut self.settings.discord_application_id).char_limit(22).hint_text("ID приложения из Discord Developer Portal"));
-                    ui.small("Нужен один Application ID владельца приложения. Это публичный ID, не токен.");
-                    ui.label(self.discord.status());
-                    ui.hyperlink_to("Создать Discord Application", "https://discord.com/developers/applications");
-                    ui.small("Для демонстрации выбери игровое окно в Discord и включи передачу звука. Громкость и mute действуют и на трансляцию.");
+                ui.add_space(35.0);
+                for (page, icon, label) in [
+                    (Page::Session, Icon::Session, "Подключение"),
+                    (Page::Audio, Icon::Audio, "Звук"),
+                    (Page::Discord, Icon::Discord, "Discord"),
+                    (Page::Settings, Icon::Settings, "Настройки"),
+                ] {
+                    if theme::nav(ui, icon, label, self.page == page, compact).clicked() {
+                        self.page = page;
+                    }
+                    ui.add_space(4.0);
+                }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.label(
+                        RichText::new(if compact {
+                            format!("v{}", env!("CARGO_PKG_VERSION"))
+                        } else {
+                            format!("Console Link  {}", env!("CARGO_PKG_VERSION"))
+                        })
+                        .size(10.5)
+                        .color(theme::SUBTLE),
+                    );
+                    if !compact {
+                        theme::label(ui, "Только ты и твоя игра.");
+                        ui.add_space(10.0);
+                    }
                 });
-                ui.collapsing("Скриншоты", |ui| { let mut directory = self.settings.screenshot_dir.to_string_lossy().into_owned(); if ui.text_edit_singleline(&mut directory).changed() { self.settings.screenshot_dir = directory.into(); } });
-                ui.collapsing("Диагностика", |ui| {
-                    ui.label(format!("Получено: {:.1} fps · очередь: {:.1} МБ", self.fps, self.history.bytes() as f64 / 1_048_576.0));
-                    ui.label(format!("Пропуски: {} · audio underruns: {}", self.capture_dropped.load(Ordering::Relaxed) + self.history.dropped(), self.active.as_ref().and_then(|a| a.audio.as_ref()).map(AudioEngine::underruns).unwrap_or(0)));
-                    ui.small("FPS измерен по доставленным кадрам. Задержка HDMI и работа Discord требуют отдельной проверки.");
-                });
-                ui.add_space(12.0); ui.small("Игровое окно: F11 - полный экран · F8 - скриншот · Esc - выйти из полного экрана");
             });
-        });
+
+        egui::TopBottomPanel::bottom("session-actions")
+            .exact_height(83.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BACKGROUND)
+                    .inner_margin(egui::Margin::symmetric(28, 18))
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let stop = running || self.opening || self.reconnect.active();
+                    let valid_video = self.devices.video.iter().any(|d| {
+                        d.id == self.settings.video_id
+                            && self
+                                .settings
+                                .mode
+                                .as_ref()
+                                .is_some_and(|m| d.modes.contains(m))
+                    });
+                    let valid_audio = (self.settings.audio_input_id.is_empty()
+                        && self.settings.audio_output_id.is_empty())
+                        || (self
+                            .devices
+                            .inputs
+                            .iter()
+                            .any(|d| d.id == self.settings.audio_input_id)
+                            && self
+                                .devices
+                                .outputs
+                                .iter()
+                                .any(|d| d.id == self.settings.audio_output_id));
+                    let can_connect = valid_video && valid_audio && !self.refreshing;
+                    ui.add_enabled_ui(stop || can_connect, |ui| {
+                        if theme::action(
+                            ui,
+                            if stop { Icon::Stop } else { Icon::Play },
+                            if stop {
+                                "Отключить"
+                            } else {
+                                "Подключить консоль"
+                            },
+                            true,
+                            210.0,
+                        )
+                        .clicked()
+                        {
+                            if stop {
+                                self.stop();
+                            } else {
+                                self.connect(ctx.clone());
+                            }
+                        }
+                    });
+                    ui.add_space(5.0);
+                    ui.add_enabled_ui(self.displayed.is_some() && !self.screenshot_pending, |ui| {
+                        if theme::action(ui, Icon::Camera, "Скриншот", false, 132.0).clicked()
+                        {
+                            self.screenshot(ctx.clone());
+                        }
+                    });
+                    if !compact {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(if running {
+                                    "Изображение в отдельном окне"
+                                } else if self.opening {
+                                    "Готовим изображение и звук…"
+                                } else {
+                                    if !valid_video {
+                                        "Выбери карту, чтобы начать"
+                                    } else if !valid_audio {
+                                        "Выбери аудиовход и выход"
+                                    } else {
+                                        "Все готово к подключению"
+                                    }
+                                })
+                                .size(11.0)
+                                .color(theme::MUTED),
+                            );
+                        });
+                    }
+                });
+            });
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BACKGROUND)
+                    .inner_margin(egui::Margin::symmetric(28, 25)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    theme::label(ui, "ТВОЕ ИГРОВОЕ ПРОСТРАНСТВО");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        theme::status(ui, status, running);
+                    });
+                });
+                ui.add_space(15.0);
+                if compact {
+                    ui.spacing_mut().scroll.floating = false;
+                    ui.spacing_mut().scroll.bar_width = 4.0;
+                    ui.spacing_mut().scroll.bar_inner_margin = 8.0;
+                }
+                egui::ScrollArea::vertical()
+                    .scroll_bar_visibility(if compact {
+                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible
+                    } else {
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
+                    })
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        match self.page {
+                            Page::Session => self.session_page(ui, ctx),
+                            Page::Audio => self.audio_page(ui),
+                            Page::Discord => self.discord_page(ui),
+                            Page::Settings => self.settings_page(ui, ctx),
+                        }
+                        if let Some(error) = &self.error {
+                            ui.add_space(14.0);
+                            message(ui, "Не удалось подключиться", error, true);
+                        }
+                        if let Some(notice) = &self.notice {
+                            ui.add_space(10.0);
+                            message(ui, "Обрати внимание", notice, false);
+                        }
+                        for warning in &self.devices.warnings {
+                            ui.add_space(10.0);
+                            message(ui, "Устройство недоступно", warning, false);
+                        }
+                    });
+            });
         if before != serde_json::to_string(&self.settings).unwrap_or_default() {
             self.dirty = Some(Instant::now());
         }
+    }
+
+    fn session_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        theme::section_heading(ui, "Подключение", "Все готово для новой игровой сессии.");
+        let running = self.active.is_some();
+        if ui.ctx().content_rect().height() >= 680.0 {
+            theme::card().inner_margin(22).show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.set_min_height(95.0);
+                ui.spacing_mut().item_spacing.y = 5.0;
+                ui.horizontal(|ui| {
+                    ui.add(egui::Image::new(&self.brand).fit_to_exact_size(egui::vec2(82.0, 82.0)));
+                    ui.add_space(17.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add_space(3.0);
+                        ui.label(
+                            RichText::new(if running {
+                                "Хорошей игры."
+                            } else if self.opening {
+                                "Еще немного…"
+                            } else {
+                                "Твоя консоль. Твой экран."
+                            })
+                            .size(if ui.available_width() < 350.0 {
+                                22.0
+                            } else {
+                                26.0
+                            })
+                            .strong(),
+                        );
+                        ui.add_space(5.0);
+                        theme::subtitle(
+                            ui,
+                            if running {
+                                "Игра открыта в отдельном окне. Делись им в Discord или OBS."
+                            } else {
+                                "Подключи карту захвата и играй на экране компьютера."
+                            },
+                        );
+                        ui.add_space(13.0);
+                        ui.horizontal(|ui| {
+                            theme::icon(ui, Icon::Plug, 14.0, theme::MUTED);
+                            theme::label(ui, "КОНСОЛЬ");
+                            theme::label(ui, "-  HDMI  -");
+                            theme::label(ui, "КАРТА");
+                            theme::label(ui, "-  USB  -");
+                            theme::label(ui, "КОМПЬЮТЕР");
+                        });
+                    });
+                });
+            });
+            ui.add_space(17.0);
+        }
+        let locked = running || self.opening;
+        ui.add_enabled_ui(!locked, |ui| {
+            if ui.available_width() >= 650.0 {
+                let width = (ui.available_width() - 16.0) / 2.0;
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        self.video_card(ui, ctx);
+                    });
+                    ui.add_space(6.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        self.audio_devices_card(ui);
+                    });
+                });
+            } else {
+                self.video_card(ui, ctx);
+                ui.add_space(14.0);
+                self.audio_devices_card(ui);
+            }
+        });
+        ui.add_space(17.0);
+        ui.horizontal(|ui| {
+            theme::icon(ui, Icon::Session, 15.0, theme::SUBTLE);
+            ui.label(
+                RichText::new(
+                    "F11  полный экран     F8  скриншот     Esc  выйти из полного экрана",
+                )
+                .size(11.0)
+                .color(theme::SUBTLE),
+            );
+        });
+    }
+
+    fn video_card(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        theme::card().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.set_min_height(254.0);
+            card_title(
+                ui,
+                Icon::Session,
+                "Изображение",
+                "Источник и качество захвата",
+            );
+            theme::label(ui, "КАРТА ЗАХВАТА");
+            let selected = self
+                .devices
+                .video
+                .iter()
+                .find(|d| d.id == self.settings.video_id)
+                .map(|d| d.name.as_str())
+                .unwrap_or("Выбери устройство");
+            let previous = self.settings.video_id.clone();
+            egui::ComboBox::from_id_salt("video")
+                .truncate()
+                .selected_text(selected)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for device in &self.devices.video {
+                        ui.selectable_value(
+                            &mut self.settings.video_id,
+                            device.id.clone(),
+                            &device.name,
+                        );
+                    }
+                });
+            if previous != self.settings.video_id {
+                self.settings.mode = None;
+            }
+            ui.add_space(9.0);
+            theme::label(ui, "КАЧЕСТВО ИЗОБРАЖЕНИЯ");
+            if let Some(device) = self
+                .devices
+                .video
+                .iter()
+                .find(|d| d.id == self.settings.video_id)
+            {
+                if self.settings.mode.is_none() {
+                    self.settings.mode = device
+                        .modes
+                        .iter()
+                        .find(|m| {
+                            m.width == 1920
+                                && m.height == 1080
+                                && m.fps_num as f64 / m.fps_den.max(1) as f64 >= 59.0
+                        })
+                        .or_else(|| device.modes.first())
+                        .cloned();
+                }
+                egui::ComboBox::from_id_salt("mode")
+                    .truncate()
+                    .selected_text(
+                        self.settings
+                            .mode
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| "Нет доступных режимов".into()),
+                    )
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for mode in &device.modes {
+                            ui.selectable_value(
+                                &mut self.settings.mode,
+                                Some(mode.clone()),
+                                mode.to_string(),
+                            );
+                        }
+                    });
+            } else {
+                ui.add_enabled(
+                    false,
+                    egui::Button::new("Сначала выбери карту")
+                        .min_size(egui::vec2(ui.available_width(), 36.0)),
+                );
+            }
+            ui.add_space(13.0);
+            ui.horizontal(|ui| {
+                theme::icon(ui, Icon::Refresh, 13.0, theme::MUTED);
+                if self.refreshing {
+                    ui.spinner();
+                    theme::label(ui, "Ищем устройства…");
+                } else if ui
+                    .add(egui::Button::new("Обновить список").small().frame(false))
+                    .clicked()
+                {
+                    self.refresh(ctx.clone());
+                }
+            });
+            if self.devices.video.is_empty() {
+                theme::subtitle(ui, "Пока не видим карту. Проверь USB-подключение.");
+            }
+        });
+    }
+
+    fn audio_devices_card(&mut self, ui: &mut egui::Ui) {
+        theme::card().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.set_min_height(254.0);
+            card_title(ui, Icon::Audio, "Звук", "От консоли к твоим наушникам");
+            audio_combo(
+                ui,
+                "audio-in",
+                "АУДИОВХОД КАРТЫ",
+                &mut self.settings.audio_input_id,
+                &self.devices.inputs,
+            );
+            ui.add_space(9.0);
+            audio_combo(
+                ui,
+                "audio-out",
+                "КУДА ВЫВОДИТЬ ЗВУК",
+                &mut self.settings.audio_output_id,
+                &self.devices.outputs,
+            );
+            ui.add_space(13.0);
+            theme::subtitle(ui, "Для игры без звука оставь оба поля пустыми.");
+        });
+    }
+
+    fn audio_page(&mut self, ui: &mut egui::Ui) {
+        theme::section_heading(ui, "Звук", "Комфортная громкость и точная синхронизация.");
+        let previous_gain = self.settings.gain;
+        let previous_mute = self.settings.muted;
+        let previous_offset = self.settings.sync_ms;
+        theme::card().inner_margin(18).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            ui.spacing_mut().interact_size.y = 28.0;
+            ui.visuals_mut().selection.bg_fill = theme::TEXT;
+            ui.horizontal(|ui| {
+                theme::icon(ui, Icon::Audio, 20.0, theme::TEXT);
+                ui.add_space(3.0);
+                ui.label(RichText::new("Громкость консоли").size(17.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{:.0}%", self.settings.gain * 100.0)).size(25.0),
+                    );
+                });
+            });
+            ui.add_space(12.0);
+            ui.style_mut().spacing.slider_width = ui.available_width();
+            ui.add(egui::Slider::new(&mut self.settings.gain, 0.0..=1.0).show_value(false));
+            ui.add_space(9.0);
+            theme::toggle(ui, &mut self.settings.muted, "Выключить звук консоли");
+            ui.add_space(12.0);
+            let peak = self
+                .active
+                .as_ref()
+                .and_then(|a| a.audio.as_ref())
+                .map(AudioEngine::peak)
+                .unwrap_or(0.0);
+            level_meter(ui, peak);
+            ui.add_space(9.0);
+            theme::subtitle(
+                ui,
+                "Громкость и выключение звука действуют и на демонстрацию в Discord.",
+            );
+        });
+        ui.add_space(12.0);
+        theme::card().inner_margin(18).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            ui.spacing_mut().interact_size.y = 28.0;
+            ui.visuals_mut().selection.bg_fill = theme::TEXT;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Синхронизация").size(17.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(format!("{:+} мс", self.settings.sync_ms)).size(20.0));
+                });
+            });
+            ui.add_space(8.0);
+            theme::subtitle(
+                ui,
+                "Подстрой звук, если он опережает изображение или отстает.",
+            );
+            ui.add_space(12.0);
+            ui.style_mut().spacing.slider_width = ui.available_width();
+            ui.add(egui::Slider::new(&mut self.settings.sync_ms, -500..=500).show_value(false));
+            ui.horizontal(|ui| {
+                theme::label(ui, "Задержать изображение");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    theme::label(ui, "Задержать звук");
+                });
+            });
+            ui.add_space(8.0);
+            if ui
+                .add(egui::Button::new("Сбросить коррекцию").small())
+                .clicked()
+            {
+                self.settings.sync_ms = 0;
+            }
+            ui.add_space(0.0);
+            theme::subtitle(ui, "Коррекция добавляет задержку выбранному потоку.");
+        });
+        if let Some(audio) = self.active.as_ref().and_then(|a| a.audio.as_ref()) {
+            if previous_gain != self.settings.gain {
+                audio.set_gain(self.settings.gain);
+            }
+            if previous_mute != self.settings.muted {
+                audio.set_muted(self.settings.muted);
+            }
+            if previous_offset != self.settings.sync_ms {
+                audio.set_delay_ms(self.settings.sync_ms.max(0) as u32);
+            }
+        }
+        if previous_offset != self.settings.sync_ms {
+            self.history.clear();
+            self.displayed = None;
+            self.texture = None;
+        }
+    }
+
+    fn discord_page(&mut self, ui: &mut egui::Ui) {
+        theme::section_heading(ui, "Discord", "Покажи друзьям, во что играешь.");
+        theme::card().show(ui,|ui| {
+            card_title(ui,Icon::Discord,"Твоя игровая активность","Название игры в профиле Discord");
+            theme::toggle(ui,&mut self.settings.discord_enabled,"Показывать мою игру");ui.add_space(18.0);
+            theme::label(ui,"ВО ЧТО ИГРАЕШЬ");
+            ui.add(egui::TextEdit::singleline(&mut self.settings.game).char_limit(128).hint_text("Например, The Legend of Zelda").desired_width(ui.available_width()).margin(egui::vec2(12.0,11.0)));
+            ui.add_space(14.0);
+            let raw=self.discord.status();let status=if raw=="Off" {"Активность выключена"} else if raw.starts_with("Activity sent") {"Активность отправлена в Discord"} else if raw.starts_with("Waiting") {"Ожидаем настольный Discord"} else {"Настрой подключение и укажи игру"};
+            theme::subtitle(ui,status);
+            ui.add_space(17.0);ui.separator();ui.add_space(13.0);
+            ui.collapsing("Первое подключение к Discord",|ui| {
+                theme::subtitle(ui,"Создай приложение в Discord Developer Portal и скопируй его Application ID. Это публичный идентификатор, не токен.");
+                ui.add_space(9.0);ui.add(egui::TextEdit::singleline(&mut self.settings.discord_application_id).char_limit(22).hint_text("Application ID").desired_width(ui.available_width()).margin(egui::vec2(12.0,10.0)));
+                ui.add_space(8.0);ui.hyperlink_to("Открыть Developer Portal ↗","https://discord.com/developers/applications");
+            });
+        });
+        ui.add_space(17.0);
+        theme::card().show(ui,|ui| {
+            ui.label(RichText::new("Поделиться геймплеем").size(17.0).strong());ui.add_space(8.0);
+            theme::subtitle(ui,"В звонке Discord выбери игровое окно Console Link и включи передачу звука. На Mac разреши Discord запись экрана и системного аудио.");
+        });
+    }
+
+    fn settings_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        theme::section_heading(ui, "Настройки", "Все важное уже под рукой.");
+        theme::card().show(ui, |ui| {
+            ui.label(RichText::new("Скриншоты").size(17.0).strong());
+            ui.add_space(7.0);
+            theme::subtitle(
+                ui,
+                "Снимки сохраняются в PNG, без рамки окна и элементов управления.",
+            );
+            ui.add_space(16.0);
+            theme::label(ui, "ПАПКА ДЛЯ СОХРАНЕНИЯ");
+            let mut directory = self.settings.screenshot_dir.to_string_lossy().into_owned();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut directory)
+                        .desired_width(ui.available_width())
+                        .margin(egui::vec2(12.0, 10.0)),
+                )
+                .changed()
+            {
+                self.settings.screenshot_dir = directory.into();
+            }
+        });
+        ui.add_space(18.0);
+        theme::card().show(ui,|ui| {
+            ui.label(RichText::new("Об приложении").size(17.0).strong());ui.add_space(8.0);
+            theme::subtitle(ui,&format!("Console Link {} · Rust · macOS и Windows",env!("CARGO_PKG_VERSION")));ui.add_space(11.0);
+            ui.hyperlink_to("Исходный код и загрузки ↗","https://github.com/Potanull/console-link");ui.add_space(12.0);
+            ui.collapsing("Диагностика подключения",|ui|{
+                ui.label(format!("Получено: {:.1} кадров/с",self.fps));
+                ui.label(format!("Очередь видео: {:.1} МБ",self.history.bytes() as f64/1_048_576.0));
+                ui.label(format!("Пропущенные кадры: {}",self.capture_dropped.load(Ordering::Relaxed)+self.history.dropped()));
+                ui.label(format!("Паузы аудиобуфера: {}",self.active.as_ref().and_then(|a|a.audio.as_ref()).map(AudioEngine::underruns).unwrap_or(0)));
+                theme::subtitle(ui,"Показатели относятся к приложению. Полную задержку карты нужно измерять отдельно.");
+                if ui.add_enabled(self.active.is_none()&&!self.opening,egui::Button::new("Обновить устройства")).clicked(){self.refresh(ctx.clone());}
+            });
+        });
     }
 
     fn game_window(&mut self, ctx: &egui::Context) {
@@ -607,7 +1139,7 @@ fn audio_combo(
     selected: &mut String,
     devices: &[AudioDeviceInfo],
 ) {
-    ui.label(label);
+    theme::label(ui, label);
     let name = devices
         .iter()
         .find(|d| d.id == *selected)
@@ -618,18 +1150,137 @@ fn audio_combo(
             "Устройство недоступно"
         });
     egui::ComboBox::from_id_salt(id)
+        .truncate()
         .selected_text(name)
-        .width(420.0)
+        .width(ui.available_width())
         .show_ui(ui, |ui| {
-            ui.selectable_value(selected, String::new(), "Не выбран");
+            ui.selectable_value(selected, String::new(), "Без звука / не выбран");
             for device in devices {
                 ui.selectable_value(selected, device.id.clone(), &device.name);
             }
         });
 }
 
+fn card_title(ui: &mut egui::Ui, icon: Icon, title: &str, description: &str) {
+    ui.horizontal(|ui| {
+        theme::icon(ui, icon, 19.0, theme::TEXT);
+        ui.add_space(3.0);
+        ui.label(RichText::new(title).size(16.0).strong());
+    });
+    theme::subtitle(ui, description);
+    ui.add_space(8.0);
+}
+
+fn message(ui: &mut egui::Ui, title: &str, text: &str, error: bool) {
+    egui::Frame::new()
+        .fill(if error {
+            Color32::from_rgb(47, 32, 34)
+        } else {
+            theme::SURFACE
+        })
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            if error {
+                Color32::from_rgb(94, 57, 61)
+            } else {
+                theme::BORDER
+            },
+        ))
+        .corner_radius(10)
+        .inner_margin(16)
+        .show(ui, |ui| {
+            ui.label(RichText::new(title).size(13.0).strong());
+            ui.add_space(4.0);
+            theme::subtitle(ui, text);
+        });
+}
+
+fn level_meter(ui: &mut egui::Ui, peak: f32) {
+    theme::label(ui, "УРОВЕНЬ СИГНАЛА");
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
+    let cells = 40;
+    let gap = 3.0;
+    let width = (rect.width() - gap * (cells - 1) as f32) / cells as f32;
+    for n in 0..cells {
+        let active = (n as f32) / (cells as f32) < peak.clamp(0.0, 1.0);
+        let r = egui::Rect::from_min_size(
+            rect.min + egui::vec2(n as f32 * (width + gap), 0.0),
+            egui::vec2(width, rect.height()),
+        );
+        ui.painter().rect_filled(
+            r,
+            2,
+            if active {
+                theme::TEXT
+            } else {
+                Color32::from_rgb(49, 52, 58)
+            },
+        );
+    }
+}
+
+fn argument_value(key: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|arg| arg == key)
+        .and_then(|index| args.get(index + 1))
+        .cloned()
+}
+
 impl eframe::App for ConsoleApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        if let Some(path) = &self.snapshot_path {
+            let image = ctx.input(|input| {
+                input.events.iter().find_map(|event| match event {
+                    egui::Event::Screenshot {
+                        viewport_id, image, ..
+                    } if *viewport_id == egui::ViewportId::ROOT => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(image) = image {
+                let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+                    if let Some(parent) = path
+                        .parent()
+                        .filter(|parent| !parent.as_os_str().is_empty())
+                    {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let file = std::fs::File::create(path)?;
+                    let mut encoder = png::Encoder::new(
+                        std::io::BufWriter::new(file),
+                        image.width() as u32,
+                        image.height() as u32,
+                    );
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let bytes: Vec<u8> = image
+                        .pixels
+                        .iter()
+                        .flat_map(|pixel| pixel.to_array())
+                        .collect();
+                    let mut writer = encoder.write_header()?;
+                    writer.write_image_data(&bytes)?;
+                    writer.finish()?;
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    eprintln!("UI snapshot failed: {error}");
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            if !self.snapshot_requested && self.started.elapsed() > Duration::from_millis(1200) {
+                self.snapshot_requested = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
+            if self.started.elapsed() > Duration::from_secs(10) {
+                eprintln!("UI snapshot timed out");
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+        }
         if std::env::args().any(|argument| argument == "--smoke-test")
             && self.started.elapsed() > Duration::from_secs(3)
         {
@@ -650,8 +1301,10 @@ impl eframe::App for ConsoleApp {
 impl Drop for ConsoleApp {
     fn drop(&mut self) {
         self.stop();
-        if self.dirty.is_some() {
-            let _ = self.store.save(&self.settings);
+        if self.dirty.is_some()
+            && let Some(store) = &self.store
+        {
+            let _ = store.save(&self.settings);
         }
     }
 }

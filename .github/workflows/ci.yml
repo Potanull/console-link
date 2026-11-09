@@ -1,15 +1,64 @@
 name: Native builds
+
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish downloadable files as a GitHub prerelease
+        type: boolean
+        required: true
+        default: false
+      release_tag:
+        description: Release tag matching Cargo.toml (for example v0.2.0)
+        type: string
+        required: true
+        default: v0.2.0
 
 permissions:
   contents: read
 
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version and publication target
+        id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          python3 - <<'PY'
+          import os, re, tomllib, plistlib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+              raise SystemExit('Package version must be numeric major.minor.patch')
+          if plistlib.loads(Path('packaging/Info.plist').read_bytes())['CFBundleShortVersionString'] != version:
+              raise SystemExit('macOS bundle version must match Cargo.toml')
+          tag = 'v' + version
+          if os.environ.get('PUBLISH_RELEASE') == 'true':
+              if os.environ['GITHUB_REF'] != 'refs/heads/main':
+                  raise SystemExit('Release publication is restricted to main')
+              if os.environ.get('REQUESTED_TAG') != tag:
+                  raise SystemExit('Release tag must exactly match Cargo.toml')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\ntag={tag}\n')
+          PY
+
   check:
-    timeout-minutes: 20
+    needs: validate
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +68,8 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    env:
+      CONSOLE_LINK_VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust components
@@ -36,28 +87,79 @@ jobs:
         run: cargo test --locked --target ${{ matrix.target }}
       - name: Package macOS
         if: runner.os == 'macOS'
-        run: bash scripts/package-macos.sh
-      - name: Package Windows
+        run: |
+          bash scripts/package-macos.sh
+          mkdir -p dist/release
+          cp dist/console-link-macos-arm64.zip "dist/release/console-link-${CONSOLE_LINK_VERSION}-macos-arm64.zip"
+      - name: Package Windows and verify installation
         if: runner.os == 'Windows'
+        timeout-minutes: 15
         shell: pwsh
         run: |
-          cargo build --locked --release --target x86_64-pc-windows-msvc
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/console-link.exe dist/
-          Copy-Item LICENSE dist/
-          Copy-Item README.md dist/
-          Copy-Item THIRD_PARTY.md dist/
-          Copy-Item THIRD_PARTY_LICENSES.txt dist/
-          Compress-Archive -Path dist/console-link.exe,dist/LICENSE,dist/README.md,dist/THIRD_PARTY.md,dist/THIRD_PARTY_LICENSES.txt -DestinationPath dist/console-link-windows-x64.zip -Force
-      - name: Upload macOS application
-        if: runner.os == 'macOS'
+          ./scripts/package-windows.ps1 -SmokeTest
+          New-Item -ItemType Directory -Force dist/release | Out-Null
+          Copy-Item "dist/console-link-$env:CONSOLE_LINK_VERSION-windows-x64.zip" dist/release/
+          Copy-Item "dist/Console-Link-$env:CONSOLE_LINK_VERSION-Setup-x64.exe" dist/release/
+      - name: Upload release files
         uses: actions/upload-artifact@v4
         with:
-          name: console-link-macos-arm64
-          path: dist/console-link-macos-arm64.zip
-      - name: Upload Windows application
-        if: runner.os == 'Windows'
+          name: release-${{ matrix.target }}
+          path: dist/release/*
+          if-no-files-found: error
+      - name: Upload installer diagnostics on failure
+        if: failure() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: console-link-windows-x64
-          path: dist/console-link-windows-x64.zip
+          name: installer-diagnostics
+          path: ${{ runner.temp }}/console-link-*.log
+          if-no-files-found: ignore
+
+  publish:
+    needs: [validate, check]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-files
+          merge-multiple: true
+      - name: Verify files and publish complete prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            "console-link-${RELEASE_VERSION}-macos-arm64.zip"
+            "console-link-${RELEASE_VERSION}-windows-x64.zip"
+            "Console-Link-${RELEASE_VERSION}-Setup-x64.exe"
+          )
+          for file in "${files[@]}"; do test -s "release-files/$file"; done
+          count=$(find release-files -maxdepth 1 -type f | wc -l)
+          test "$count" -eq 3
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release tag already exists; refusing to replace existing release files.' >&2
+            exit 1
+          else
+            result=$?
+            test "$result" -eq 2
+          fi
+          (cd release-files && sha256sum "${files[@]}" > SHA256SUMS.txt)
+          gh release create "$RELEASE_TAG" release-files/* \
+            --target "$GITHUB_SHA" \
+            --title "Console Link $RELEASE_VERSION" \
+            --notes-file packaging/release-notes.md \
+            --draft --prerelease --latest=false
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > release-assets.txt
+          printf '%s\n' "${files[@]}" SHA256SUMS.txt | sort > expected-assets.txt
+          diff -u expected-assets.txt release-assets.txt
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,tagName

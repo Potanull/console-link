@@ -1,10 +1,12 @@
 pub mod audio;
 pub mod discord;
+pub mod discord_auth;
 pub mod native;
 pub mod scheduler;
 pub mod session;
 pub mod settings;
 pub mod types;
+pub mod video_policy;
 
 #[cfg(test)]
 mod platform_configuration {

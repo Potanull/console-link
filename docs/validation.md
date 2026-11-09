@@ -58,3 +58,11 @@
 Windows-установщик и публикация Releases подтверждены в [Native builds #2](https://github.com/Potanull/console-link/actions/runs/42667922070), исходный коммит cdcb375bd1316ce71e46756ab88427de8936fd87. Все задания success. Windows smoke проверил установку без admin, отсутствие отдельного VC runtime в PE imports, запуск CLI, повторную установку с прежним AppId, ярлык/регистрацию, сохранность пользовательского sentinel и удаление managed files.
 
 [Предварительный релиз v0.2.0](https://github.com/Potanull/console-link/releases/tag/v0.2.0) опубликован: Mac ZIP, Windows installer, portable ZIP и SHA256SUMS.txt. Все файлы скачаны через публичные ссылки; SHA256 фактических байтов сверены с manifest и GitHub asset digest. Проверены содержимое архивов, версии и наличие лицензионных уведомлений. Аппаратная приемка остается открытой.
+
+## Версия 0.3.0: игровой режим и Discord
+
+Локально прошли 57 library tests и 11 binary tests, форматирование, Mac Clippy всех targets и Windows GNU cross-target Clippy. Реальный Mac .app прошел smoke launch/exit. Независимое ревью подтвердило исправление потери FPS на источнике 60 Гц, busy polling без новых кадров, сохранения rotated refresh token и повторного восстановления входа после offline. UI позволяет забыть вход также после ошибки.
+
+Discord Application Console Link зарегистрировано владельцем: Public Client включен, loopback redirect сохранен. PKCE, callback validation, отмена, secret redaction, account gate и временные ошибки покрыты тестами. Реальный consent/code exchange, Keychain, refresh/revoke и статус в настольном Discord пока не подтверждены.
+
+Снимки интерфейса используют собственный renderer без доступа к Keychain и пользовательским настройкам. Диагностические кадры и циклы режимов окна не заменяют аппаратный захват. Обновлены уведомления для 302 зависимостей двух целевых платформ, включая OAuth/native TLS и Inter OFL.

@@ -28,6 +28,23 @@ pub struct DiscordWorker {
     status: Arc<Mutex<String>>,
     wake: Sender<()>,
     stop: Sender<()>,
+    account_requirement: Arc<Mutex<AccountRequirement>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum AccountRequirement {
+    #[default]
+    Legacy,
+    SignedOut,
+    User(String),
+}
+
+fn account_allowed(requirement: &AccountRequirement, desktop_user_id: Option<&str>) -> bool {
+    match requirement {
+        AccountRequirement::Legacy => true,
+        AccountRequirement::SignedOut => false,
+        AccountRequirement::User(expected) => desktop_user_id == Some(expected.as_str()),
+    }
 }
 
 impl Default for DiscordWorker {
@@ -42,13 +59,24 @@ impl DiscordWorker {
         let status = Arc::new(Mutex::new("Off".into()));
         let (wake, wake_rx) = bounded(1);
         let (stop, stop_rx) = bounded(1);
+        let account_requirement = Arc::new(Mutex::new(AccountRequirement::Legacy));
+        let worker_requirement = Arc::clone(&account_requirement);
         let (desired_clone, status_clone) = (Arc::clone(&desired), Arc::clone(&status));
-        std::thread::spawn(move || run(desired_clone, status_clone, wake_rx, stop_rx));
+        std::thread::spawn(move || {
+            run(
+                desired_clone,
+                status_clone,
+                wake_rx,
+                stop_rx,
+                worker_requirement,
+            )
+        });
         Self {
             desired,
             status,
             wake,
             stop,
+            account_requirement,
         }
     }
 
@@ -66,6 +94,22 @@ impl DiscordWorker {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
+
+    /// Enables account-checked presence. `None` signs out and clears published activity.
+    /// Call once during app startup, then whenever the linked OAuth identity changes.
+    pub fn require_account(&self, account_id: Option<String>) {
+        let next = account_id
+            .map(AccountRequirement::User)
+            .unwrap_or(AccountRequirement::SignedOut);
+        let mut requirement = self
+            .account_requirement
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *requirement != next {
+            *requirement = next;
+            let _ = self.wake.try_send(());
+        }
+    }
 }
 
 impl Drop for DiscordWorker {
@@ -79,10 +123,12 @@ fn run(
     status: Arc<Mutex<String>>,
     wake: Receiver<()>,
     stop: Receiver<()>,
+    account_requirement: Arc<Mutex<AccountRequirement>>,
 ) {
     let mut client: Option<Client> = None;
     let mut sent: Option<Presence> = None;
     let mut last_try = Instant::now() - Duration::from_secs(10);
+    let mut last_requirement = AccountRequirement::Legacy;
     loop {
         if stop.try_recv().is_ok() {
             if let Some(mut client) = client {
@@ -92,15 +138,31 @@ fn run(
             break;
         }
         let wanted = desired.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let requirement = account_requirement
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if requirement != last_requirement {
+            if let Some(mut old) = client.take() {
+                let _ = old.clear_activity();
+                let _ = old.close();
+            }
+            sent = None;
+            last_requirement = requirement.clone();
+            last_try = Instant::now() - Duration::from_secs(10);
+        }
         let invalid = wanted.as_ref().is_some_and(|p| !p.valid());
-        let wanted = wanted.filter(Presence::valid);
+        let signed_out = requirement == AccountRequirement::SignedOut;
+        let wanted = wanted.filter(|presence| presence.valid() && !signed_out);
         if wanted.is_none() {
             if let Some(mut old) = client.take() {
                 let _ = old.clear_activity();
                 let _ = old.close();
             }
             sent = None;
-            *status.lock().unwrap_or_else(|e| e.into_inner()) = if invalid {
+            *status.lock().unwrap_or_else(|e| e.into_inner()) = if signed_out {
+                "Link your Discord account to share activity".into()
+            } else if invalid {
                 "Enter a Discord Application ID and a game name".into()
             } else {
                 "Off".into()
@@ -121,16 +183,26 @@ fn run(
             }
             if last_try.elapsed() >= Duration::from_secs(5) {
                 last_try = Instant::now();
+                let mut account_mismatch = false;
                 let result = (|| -> Result<(), Error> {
                     if client.is_none() {
                         let mut new = Client {
                             id: presence.application_id.clone(),
                             transport: None,
+                            user_id: None,
                         };
                         new.connect()?;
                         client = Some(new);
                     }
                     let connected = client.as_mut().expect("connected");
+                    let current_requirement = account_requirement
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    if !account_allowed(&current_requirement, connected.user_id.as_deref()) {
+                        account_mismatch = true;
+                        return Err(Error::IPCConnectionFailed);
+                    }
                     connected.set_activity(
                         activity::Activity::new()
                             .details(presence.game.as_str())
@@ -152,8 +224,11 @@ fn run(
                     Err(_) => {
                         client = None;
                         sent = None;
-                        *status.lock().unwrap_or_else(|e| e.into_inner()) =
-                            "Waiting for desktop Discord (activity sharing must be enabled)".into();
+                        *status.lock().unwrap_or_else(|e| e.into_inner()) = if account_mismatch {
+                            "Desktop Discord account differs from linked account".into()
+                        } else {
+                            "Waiting for desktop Discord (activity sharing must be enabled)".into()
+                        };
                     }
                 }
             }
@@ -166,6 +241,7 @@ fn run(
 struct Client {
     id: String,
     transport: Option<Transport>,
+    user_id: Option<String>,
 }
 
 impl DiscordIpc for Client {
@@ -209,6 +285,13 @@ impl DiscordIpc for Client {
         if opcode != 1 || response.get("evt").and_then(Value::as_str) != Some("READY") {
             return Err(Error::IPCConnectionFailed);
         }
+        self.user_id = response
+            .pointer("/data/user/id")
+            .and_then(Value::as_str)
+            .filter(|value| {
+                (16..=22).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+            })
+            .map(str::to_owned);
         Ok(())
     }
 }
@@ -378,8 +461,43 @@ mod tests {
         let mut client = Client {
             id: String::new(),
             transport: Some(Transport(socket)),
+            user_id: None,
         };
         assert!(client.recv().is_err());
+    }
+
+    #[test]
+    fn linked_account_gate_is_fail_closed_for_missing_or_different_desktop_identity() {
+        let linked = AccountRequirement::User("123456789012345678".into());
+        assert!(account_allowed(&linked, Some("123456789012345678")));
+        assert!(!account_allowed(&linked, Some("987654321098765432")));
+        assert!(!account_allowed(&linked, None));
+        assert!(!account_allowed(
+            &AccountRequirement::SignedOut,
+            Some("123456789012345678")
+        ));
+        assert!(account_allowed(&AccountRequirement::Legacy, None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ready_handshake_records_desktop_identity_before_presence() {
+        let (socket, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let ready = br#"{"evt":"READY","data":{"user":{"id":"123456789012345678"}}}"#;
+        peer.write_all(&1_u32.to_le_bytes()).unwrap();
+        peer.write_all(&(ready.len() as u32).to_le_bytes()).unwrap();
+        peer.write_all(ready).unwrap();
+        let mut client = Client {
+            id: "1569416573180051537".into(),
+            transport: Some(Transport(socket)),
+            user_id: None,
+        };
+        client.send_handshake().unwrap();
+        assert_eq!(client.user_id.as_deref(), Some("123456789012345678"));
+        assert!(!account_allowed(
+            &AccountRequirement::User("987654321098765432".into()),
+            client.user_id.as_deref()
+        ));
     }
 
     #[cfg(windows)]

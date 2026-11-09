@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod playback;
+mod shortcuts;
 mod theme;
 
 fn main() -> eframe::Result {

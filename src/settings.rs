@@ -1,4 +1,4 @@
-use crate::types::VideoMode;
+use crate::{types::VideoMode, video_policy::CapturePreferences};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -10,12 +10,23 @@ pub enum SettingsError {
     Invalid(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GameWindowMode {
+    #[default]
+    Windowed,
+    Borderless,
+    Fullscreen,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub schema_version: u32,
     pub video_id: String,
     pub mode: Option<VideoMode>,
+    pub capture_preferences: CapturePreferences,
+    pub game_window_mode: GameWindowMode,
     pub audio_input_id: String,
     pub audio_output_id: String,
     pub gain: f32,
@@ -36,6 +47,8 @@ impl Default for Settings {
             schema_version: 1,
             video_id: String::new(),
             mode: None,
+            capture_preferences: CapturePreferences::default(),
+            game_window_mode: GameWindowMode::default(),
             audio_input_id: String::new(),
             audio_output_id: String::new(),
             gain: 0.75,
@@ -70,6 +83,8 @@ impl Settings {
         }
         settings.gain = settings.gain.clamp(0.0, 1.0);
         settings.sync_ms = settings.sync_ms.clamp(-500, 500);
+        settings.capture_preferences.preferred_fps =
+            settings.capture_preferences.preferred_fps.clamp(1, 60);
         if settings.mode.as_ref().is_some_and(|m| {
             m.width == 0
                 || m.height == 0
@@ -162,6 +177,28 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_settings_gain_automatic_sixty_fps_and_windowed_default() {
+        let settings = Settings::parse(
+            r#"{"schema_version":1,"mode":{"width":1920,"height":1080,"fps_num":30,"fps_den":1}}"#,
+        )
+        .unwrap();
+        assert!(settings.capture_preferences.automatic);
+        assert_eq!(settings.capture_preferences.preferred_fps, 60);
+        assert_eq!(settings.game_window_mode, GameWindowMode::Windowed);
+    }
+
+    #[test]
+    fn capture_preference_limits_and_window_mode_survive_roundtrip() {
+        let settings = Settings::parse(r#"{"schema_version":1,"capture_preferences":{"automatic":false,"preferred_fps":900},"game_window_mode":"borderless"}"#).unwrap();
+        assert!(!settings.capture_preferences.automatic);
+        assert_eq!(settings.capture_preferences.preferred_fps, 60);
+        assert_eq!(settings.game_window_mode, GameWindowMode::Borderless);
+        let decoded = Settings::parse(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(decoded.capture_preferences, settings.capture_preferences);
+        assert_eq!(decoded.game_window_mode, settings.game_window_mode);
+    }
 
     #[test]
     fn rejects_future_schema_without_overwriting() {

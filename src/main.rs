@@ -4,6 +4,7 @@ mod app;
 mod playback;
 mod shortcuts;
 mod theme;
+mod window_geometry;
 
 fn main() -> eframe::Result {
     if std::env::args().any(|a| a == "--list-devices") {

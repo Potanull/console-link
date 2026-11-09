@@ -157,7 +157,7 @@ impl FramePacer {
 pub fn mode_label(mode: GameWindowMode) -> &'static str {
     match mode {
         GameWindowMode::Windowed => "Оконный",
-        GameWindowMode::Borderless => "Окно без рамки",
+        GameWindowMode::Borderless => "Безрамочный полный экран",
         GameWindowMode::Fullscreen => "Полный экран",
     }
 }

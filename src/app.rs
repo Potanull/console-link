@@ -99,6 +99,7 @@ pub struct ConsoleApp {
     menu_geometry: Option<WindowGeometry>,
     game_geometry: Option<WindowGeometry>,
     pending_geometry: Option<WindowGeometry>,
+    pending_borderless: Option<Instant>,
     native_mode: Option<GameWindowMode>,
     snapshot_game: bool,
     snapshot_cycle: bool,
@@ -194,6 +195,7 @@ impl ConsoleApp {
             menu_geometry: None,
             game_geometry: None,
             pending_geometry: None,
+            pending_borderless: None,
             native_mode: None,
             snapshot_game,
             snapshot_cycle,
@@ -1307,7 +1309,7 @@ impl ConsoleApp {
                 for mode in [GameWindowMode::Windowed, GameWindowMode::Borderless, GameWindowMode::Fullscreen] { ui.selectable_value(&mut self.settings.game_window_mode, mode, playback::mode_label(mode)); }
             });
             if before != self.settings.game_window_mode && self.playback.playing { self.playback.set_mode(self.settings.game_window_mode); self.apply_window_mode(ctx); }
-            theme::subtitle(ui, "Окно без рамки сохраняет размер; его можно перемещать за изображение, когда меню закрыто.");
+            theme::subtitle(ui, "Безрамочный полный экран занимает текущий монитор и остается обычным окном рабочего стола.");
             ui.add_space(14.0); ui.strong("Горячие клавиши");
             for (key, action) in shortcuts::HELP { ui.horizontal_wrapped(|ui| { ui.label(RichText::new(*key).strong()); theme::label(ui, action); }); }
             theme::subtitle(ui, "Клавиши работают, когда окно приложения в фокусе. M и +/- - только при закрытом меню.");
@@ -1343,10 +1345,12 @@ impl ConsoleApp {
             self.apply_window_mode(ctx);
         } else if !wants_game && self.playback.playing {
             self.playback.finish();
+            self.pending_borderless = None;
             self.page = Page::Session;
             self.native_mode = None;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Title("Console Link".into()));
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
                 720.0, 600.0,
@@ -1370,12 +1374,11 @@ impl ConsoleApp {
         if self.native_mode == Some(mode) {
             return;
         }
-        if self
-            .native_mode
-            .is_some_and(|mode| mode != GameWindowMode::Fullscreen)
-        {
+        if self.native_mode == Some(GameWindowMode::Windowed) {
             self.game_geometry = WindowGeometry::current(ctx).or(self.game_geometry);
         }
+        self.pending_borderless = (mode == GameWindowMode::Borderless).then(Instant::now);
+        self.pending_geometry = None;
         if mode == GameWindowMode::Fullscreen {
             ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
@@ -1384,7 +1387,10 @@ impl ConsoleApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(
                 mode == GameWindowMode::Windowed,
             ));
-            self.pending_geometry = self.game_geometry;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+            if mode == GameWindowMode::Windowed {
+                self.pending_geometry = self.game_geometry;
+            }
         }
         self.native_mode = Some(mode);
         self.settings.game_window_mode = mode;
@@ -1511,16 +1517,6 @@ impl ConsoleApp {
                     let size = original * (available.x / original.x).min(available.y / original.y);
                     let rect = egui::Rect::from_center_size(ui.max_rect().center(), size);
                     ui.put(rect, egui::Image::new(texture).fit_to_exact_size(size));
-                }
-                if self.playback.mode == GameWindowMode::Borderless && !self.playback.overlay_open {
-                    let response = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with("game-drag"),
-                        egui::Sense::drag(),
-                    );
-                    if response.drag_started() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                    }
                 }
             });
         let progress = ctx.animate_bool_with_time(
@@ -1748,7 +1744,7 @@ fn argument_value(key: &str) -> Option<String> {
 }
 
 impl eframe::App for ConsoleApp {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.snapshot_cycle
             && !self.snapshot_cycle_closed
             && self.started.elapsed() > Duration::from_millis(1300)
@@ -1846,6 +1842,38 @@ impl eframe::App for ConsoleApp {
             self.game_scene(ctx);
         } else {
             self.controls(ctx);
+        }
+        if let Some(requested) = self.pending_borderless {
+            let geometry = if ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)) {
+                Ok(None)
+            } else {
+                crate::window_geometry::monitor_rect(frame, ctx)
+            };
+            match geometry {
+                Ok(Some(rect)) => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                    self.pending_geometry = Some(WindowGeometry {
+                        position: rect.min,
+                        size: rect.size(),
+                    });
+                    self.pending_borderless = None;
+                    ctx.request_repaint();
+                }
+                Ok(None) if requested.elapsed() < Duration::from_secs(10) => {
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                }
+                result => {
+                    let error = result
+                        .err()
+                        .unwrap_or_else(|| "Не завершился переход из полного экрана".into());
+                    self.error = Some(format!(
+                        "Не удалось открыть безрамочный полный экран: {error}"
+                    ));
+                    self.playback.set_mode(GameWindowMode::Windowed);
+                    self.apply_window_mode(ctx);
+                }
+            }
         }
         let now = ctx.input(|input| input.time);
         if previous_volume != (self.settings.gain, self.settings.muted) {

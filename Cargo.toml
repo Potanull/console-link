@@ -1,6 +1,6 @@
 [package]
 name = "console-link"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "A focused desktop companion for HDMI capture cards"
@@ -19,6 +19,11 @@ keyring = { version = "3.6", features = ["apple-native", "windows-native"] }
 webbrowser = "1"
 url = "2"
 raw-window-handle = "0.6"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+ocrs = { version = "0.14", default-features = false, features = ["onnx"] }
+rten = { version = "0.28", default-features = false, features = ["onnx_format"] }
+sha2 = "0.10"
+unicode-normalization = "0.1"
 # Cargo.lock resolves gpu-allocator against windows 0.58 to match wgpu-hal.
 wgpu = { version = "27", default-features = false, features = ["metal", "dx12", "wgsl", "std"] }
 
@@ -35,7 +40,10 @@ block2 = "0.6"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_Media_MediaFoundation", "Win32_Media_KernelStreaming", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_Security", "Win32_Storage_FileSystem"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_Media_MediaFoundation", "Win32_Media_KernelStreaming", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_Security", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+ab_glyph = "0.2"
 
 [profile.release]
 lto = "thin"

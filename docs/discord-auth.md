@@ -12,7 +12,7 @@ OAuth подтверждает личность пользователя (`ident
 - Только `identify`; partner scopes `rpc` / `rpc.activities.write` не запрашиваются.
 - HTTP через `reqwest` с нативным TLS: SChannel на Windows и Security Framework на macOS. Проверка сертификатов включена, сетевые redirects запрещены, connect timeout 4 с, общий timeout 8 с.
 - Приемник callback привязан только к `127.0.0.1:45961`. Проверяются GET, path, Host, state, дубли query-полей, размер заголовка и срок ожидания. Сравнение state использует timing-resistant traits OAuth-библиотеки.
-- После callback браузер заменяет URL на путь без authorization code. Статический script разрешен только по CSP hash; параметры входа не вставляются в HTML.
+- После валидного callback браузер заменяет URL на путь без authorization code и открывает tokenless console-link://auth/complete. Native completion отдельно восстанавливает/фокусирует существующее окно. Windows installer и macOS .app регистрируют обработчик URI. Статический script разрешен только по CSP hash; параметры входа не вставляются в HTML.
 - Вход, восстановление сессии и refresh выполняются на одном owner-потоке. UI не блокируется; отмена меняет generation и не дает запоздалому результату связать старый аккаунт.
 - Refresh token сохраняется только через Keychain/Credential Manager. Access token используется в памяти для проверки профиля. В JSON настроек, логах и публичном API токенов нет. При недоступном защищенном хранилище не используется файловый fallback.
 - Отключение сразу убирает публичную identity из UI/API и запрещает presence. Owner-поток удаляет credential, затем пытается отозвать refresh token на сервере. Серверный revoke является best effort: локальное отключение не обещает удаление записи из списка Authorized Apps при недоступном Discord.
@@ -39,3 +39,9 @@ Mac tests и Clippy, Windows cross-target Clippy проверяют код. Ре
 - [Discord RPC READY](https://docs.discord.com/developers/topics/rpc#ready).
 - [Rich Presence](https://docs.discord.com/developers/discord-social-sdk/development-guides/setting-rich-presence).
 - [oauth2-rs](https://github.com/ramosbugs/oauth2-rs), [keyring-rs](https://github.com/hwchen/keyring-rs), [reqwest TLS](https://docs.rs/reqwest/latest/reqwest/tls/index.html).
+
+## Rich Presence 0.4
+
+Activity задает название выбранной игры (`name`), `status_display_type=Details`, details, platform state, cover art и таймер. SET_ACTIVITY ожидает ограниченный по времени ответ с проверкой command/nonce/opcode. Название, проигнорированное или не подтвержденное клиентом, имеет отдельный статус. OAuth identity остается обязательной проверкой аккаунта перед IPC.
+
+Браузер может блокировать автоматическое открытие custom URI; оформленная страница сохраняет явную кнопку возврата. В URI нет code/state/token и сам URI никогда не подключает аккаунт. Portable Windows без установленного protocol handler полагается на native completion focus. Реальные браузерные переходы и Windows activation требуют ручной проверки.

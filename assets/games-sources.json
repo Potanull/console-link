@@ -1,0 +1,36 @@
+{
+  "revision": "d424690446eec6f4484209b9a1c067c7f7511398",
+  "count": 24017,
+  "sources": [
+    {
+      "region": "US.en",
+      "sha256": "667645107c6ca9afc7828e2a1d5a82c044dc786a8022975081b6afb341e646e3",
+      "url": "https://raw.githubusercontent.com/blawar/titledb/d424690446eec6f4484209b9a1c067c7f7511398/US.en.json"
+    },
+    {
+      "region": "GB.en",
+      "sha256": "2e9655bf45feb15d3db637442bd554cddf21081f3f11515b8c102182fb4af84b",
+      "url": "https://raw.githubusercontent.com/blawar/titledb/d424690446eec6f4484209b9a1c067c7f7511398/GB.en.json"
+    },
+    {
+      "region": "JP.ja",
+      "sha256": "226cbb9e608c98e508ff5ff701b57ccfdeddd30acdb63d22071893ac63567f5c",
+      "url": "https://raw.githubusercontent.com/blawar/titledb/d424690446eec6f4484209b9a1c067c7f7511398/JP.ja.json"
+    },
+    {
+      "region": "RU.ru",
+      "sha256": "62efe9af38480b51e0d51b2359f9a748eb0f0e825aa71d93749ed0c365c247cf",
+      "url": "https://raw.githubusercontent.com/blawar/titledb/d424690446eec6f4484209b9a1c067c7f7511398/RU.ru.json"
+    },
+    {
+      "region": "FR.fr",
+      "sha256": "f20c4dced240d780b24652b90151d35e00139554088277be0d271501c47f096f",
+      "url": "https://raw.githubusercontent.com/blawar/titledb/d424690446eec6f4484209b9a1c067c7f7511398/FR.fr.json"
+    },
+    {
+      "region": "DE.de",
+      "sha256": "173e894a2ab3eaa39b9264efa925a47972f88525fa849f3466bf897582e57b7f",
+      "url": "https://raw.githubusercontent.com/blawar/titledb/d424690446eec6f4484209b9a1c067c7f7511398/DE.de.json"
+    }
+  ]
+}

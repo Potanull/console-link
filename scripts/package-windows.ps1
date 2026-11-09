@@ -88,6 +88,14 @@ try {
         if ($registration.DisplayName -ne 'Console Link' -or $registration.DisplayVersion -ne $version) {
             throw 'Per-user uninstall registration has incorrect product metadata.'
         }
+        $protocolKey = 'HKCU:\Software\Classes\console-link'
+        $protocolCommand = (Get-Item -LiteralPath ($protocolKey + '\shell\open\command')).GetValue('')
+        if ($protocolCommand -notlike ('*"' + $installedExe + '"*--return-from-discord*"%1"*')) {
+            throw 'Protocol handler does not return to the installed application.'
+        }
+        if ($null -eq (Get-Item -LiteralPath $protocolKey).GetValue('URL Protocol')) {
+            throw 'Protocol handler is not registered as a URL scheme.'
+        }
         $startMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Console Link/Console Link.lnk'
         if (-not (Test-Path -LiteralPath $startMenuShortcut -PathType Leaf)) { throw 'Start menu shortcut was not created for the current user.' }
 
@@ -114,6 +122,7 @@ try {
             if (Test-Path -LiteralPath (Join-Path $installDir $name)) { throw "Uninstaller left a managed file behind: $name" }
         }
         if (Test-Path -LiteralPath $uninstallKey) { throw 'Uninstaller left its per-user registration behind.' }
+        if (Test-Path -LiteralPath $protocolKey) { throw 'Uninstaller left its URL protocol registration behind.' }
         if (Test-Path -LiteralPath $startMenuShortcut) { throw 'Uninstaller left its start menu shortcut behind.' }
         if ((Get-Content -LiteralPath $sentinel -Raw) -cne $sentinelText) { throw 'Uninstaller removed or changed an unrelated user file.' }
         Remove-Item -LiteralPath $sentinel

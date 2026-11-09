@@ -54,6 +54,11 @@ Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD_PARTY_LICENSES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\console-link"; ValueType: string; ValueName: ""; ValueData: "URL:Console Link"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\console-link"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\console-link\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\console-link.exe"" --return-from-discord ""%1"""
+
 [Icons]
 Name: "{group}\Console Link"; Filename: "{app}\console-link.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\Console Link"; Filename: "{app}\console-link.exe"; WorkingDir: "{app}"; Tasks: desktopicon

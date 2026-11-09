@@ -33,6 +33,9 @@ pub struct Settings {
     pub muted: bool,
     pub sync_ms: i32,
     pub game: String,
+    pub recognition_enabled: bool,
+    pub show_share_prompt: bool,
+    pub game_manual_override: bool,
     pub discord_enabled: bool,
     pub discord_application_id: String,
     pub screenshot_dir: PathBuf,
@@ -55,6 +58,9 @@ impl Default for Settings {
             muted: false,
             sync_ms: 0,
             game: String::new(),
+            recognition_enabled: true,
+            show_share_prompt: true,
+            game_manual_override: false,
             discord_enabled: false,
             discord_application_id: String::new(),
             screenshot_dir,
@@ -184,6 +190,9 @@ mod tests {
             r#"{"schema_version":1,"mode":{"width":1920,"height":1080,"fps_num":30,"fps_den":1}}"#,
         )
         .unwrap();
+        assert!(settings.recognition_enabled);
+        assert!(!settings.game_manual_override);
+        assert!(settings.show_share_prompt);
         assert!(settings.capture_preferences.automatic);
         assert_eq!(settings.capture_preferences.preferred_fps, 60);
         assert_eq!(settings.game_window_mode, GameWindowMode::Windowed);

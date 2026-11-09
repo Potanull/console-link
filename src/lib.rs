@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod discord;
 pub mod discord_auth;
+pub mod game_recognition;
 pub mod native;
 pub mod scheduler;
 pub mod session;

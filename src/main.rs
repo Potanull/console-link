@@ -1,12 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod app_return;
+mod artwork;
 mod playback;
 mod shortcuts;
 mod theme;
 mod window_geometry;
 
 fn main() -> eframe::Result {
+    // A protocol invocation only returns focus to an existing login. It never
+    // carries an authorization code and must not start a second media process.
+    if std::env::args()
+        .any(|arg| arg == "--return-from-discord" || arg == "console-link://auth/complete")
+    {
+        app_return::activate_existing();
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--list-devices") {
         match console_link::native::enumerate() {
             Ok(devices) => {

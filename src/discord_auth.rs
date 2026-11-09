@@ -36,6 +36,7 @@ type PublicClient =
 pub struct DiscordAccount {
     pub id: String,
     pub display_name: String,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +57,7 @@ struct Shared {
     status: Mutex<AuthStatus>,
     intent: Mutex<Option<(u64, Command)>>,
     generation: AtomicU64,
+    completion: AtomicU64,
     stopped: AtomicBool,
 }
 
@@ -85,6 +87,7 @@ impl DiscordAuth {
             status: Mutex::new(AuthStatus::Disconnected),
             intent: Mutex::new(None),
             generation: AtomicU64::new(0),
+            completion: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
         });
         let (wake, receiver) = bounded(1);
@@ -126,6 +129,9 @@ impl DiscordAuth {
                             session = None;
                             match login(&worker_id, &http, &vault, &worker_shared, generation) {
                                 Ok(connected) => {
+                                    if worker_shared.current(generation) {
+                                        worker_shared.completion.fetch_add(1, Ordering::AcqRel);
+                                    }
                                     worker_shared.set_status(
                                         generation,
                                         AuthStatus::Connected(
@@ -216,6 +222,11 @@ impl DiscordAuth {
             shared,
             wake,
         }
+    }
+
+    /// Increments only after a successful explicit login; URI wakeups never authorize an account.
+    pub fn completion_generation(&self) -> u64 {
+        self.shared.completion.load(Ordering::Acquire)
     }
 
     pub fn application_id(&self) -> &str {
@@ -725,17 +736,37 @@ fn parse_callback(header: &[u8], expected_state: &str) -> Result<Callback, ()> {
 }
 
 fn reply(stream: &mut TcpStream, success: bool) {
-    let body = if success {
-        "<!doctype html><meta charset=utf-8><title>Console Link</title><script>history.replaceState(null,'','/discord/complete');</script><h1>Проверяем вход</h1><p>Вернись в Console Link. Проверка аккаунта продолжается. Эту вкладку можно закрыть.</p>"
+    let _ = stream.write_all(completion_response(success).as_bytes());
+}
+
+fn completion_response(success: bool) -> String {
+    let (status, script, script_hash, heading, message, button) = if success {
+        (
+            "200 OK",
+            "history.replaceState(null,'','/discord/complete');setTimeout(()=>location.assign('console-link://auth/complete'),150);",
+            "6MEkWWTxwHzvUzyMvAEk4UxJFw4DZKA0t1pb/0N7Vjk=",
+            "Возвращаемся в Console Link",
+            "Запрос Discord получен. Приложение завершает проверку аккаунта.",
+            "<a href=\"console-link://auth/complete\">Открыть Console Link</a>",
+        )
     } else {
-        "<!doctype html><meta charset=utf-8><title>Console Link</title><script>history.replaceState(null,'','/discord/complete');</script><h1>Запрос не принят</h1><p>Вернись в Console Link, чтобы отменить или повторить вход.</p>"
+        (
+            "400 Bad Request",
+            "history.replaceState(null,'','/discord/complete');",
+            "5RDgjC2qQzkZJiiHDmWT0sZuAyMDlXM8o/nvGc5LNiw=",
+            "Запрос не принят",
+            "Вернись в Console Link, чтобы отменить или повторить вход.",
+            "",
+        )
     };
-    let status = if success { "200 OK" } else { "400 Bad Request" };
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'sha256-5RDgjC2qQzkZJiiHDmWT0sZuAyMDlXM8o/nvGc5LNiw='\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
+    // Static content only. No code, state, token or provider text enters the response/URI.
+    let body = format!(
+        r#"<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Console Link</title><script>{script}</script><style>html{{color-scheme:dark;font:16px system-ui;background:#101114;color:#f5f5f7}}body{{min-height:90vh;display:grid;place-items:center;margin:0;padding:24px;box-sizing:border-box}}main{{max-width:440px;background:#1b1c20;border:1px solid #36373d;border-radius:24px;padding:40px}}.brand{{font-size:12px;letter-spacing:3px;color:#aaa}}h1{{font-size:28px;line-height:1.2}}p{{color:#aaa;line-height:1.6}}a{{display:inline-block;margin-top:16px;padding:14px 20px;border-radius:12px;background:#fff;color:#111;text-decoration:none;font-weight:600}}</style><main><div class="brand">CONSOLE LINK</div><h1>{heading}</h1><p>{message}</p>{button}<p>Если браузер запросит разрешение, подтверди открытие приложения. Затем эту вкладку можно закрыть.</p></main></html>"#
     );
-    let _ = stream.write_all(response.as_bytes());
+    format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-{script_hash}'\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 fn valid_id(id: &str) -> bool {
@@ -747,6 +778,8 @@ fn parse_account(bytes: &[u8]) -> Result<DiscordAccount, ()> {
         id: String,
         username: String,
         global_name: Option<String>,
+        avatar: Option<String>,
+        discriminator: Option<String>,
     }
     let profile: Profile = serde_json::from_slice(bytes).map_err(|_| ())?;
     if !valid_id(&profile.id) {
@@ -764,15 +797,92 @@ fn parse_account(bytes: &[u8]) -> Result<DiscordAccount, ()> {
     if display_name.trim().is_empty() {
         return Err(());
     }
+    let avatar_url = avatar_url(
+        &profile.id,
+        profile.avatar.as_deref(),
+        profile.discriminator.as_deref(),
+    );
     Ok(DiscordAccount {
         id: profile.id,
         display_name,
+        avatar_url,
     })
+}
+
+fn avatar_url(id: &str, hash: Option<&str>, discriminator: Option<&str>) -> Option<String> {
+    let id_number = id.parse::<u64>().ok()?;
+    if let Some(hash) = hash {
+        let plain = hash.strip_prefix("a_").unwrap_or(hash);
+        if plain.len() != 32 || !plain.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        return Some(format!(
+            "https://cdn.discordapp.com/avatars/{id}/{hash}.png?size=128"
+        ));
+    }
+    let legacy = discriminator
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value != 0);
+    let index = legacy.map_or((id_number >> 22) % 6, |value| u64::from(value % 5));
+    Some(format!(
+        "https://cdn.discordapp.com/embed/avatars/{index}.png"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_uses_validated_cdn_hash_and_default_avatar_without_extra_scopes() {
+        let profile = parse_account(br#"{"id":"123456789012345678","username":"Player","avatar":"a_0123456789abcdef0123456789abcdef"}"#).unwrap();
+        assert_eq!(
+            profile.avatar_url.as_deref(),
+            Some(
+                "https://cdn.discordapp.com/avatars/123456789012345678/a_0123456789abcdef0123456789abcdef.png?size=128"
+            )
+        );
+        for hash in [
+            "../private",
+            "https://attacker.example/image",
+            "a_short",
+            "0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(avatar_url("123456789012345678", Some(hash), None).is_none());
+        }
+        let default = avatar_url("123456789012345678", None, Some("0")).unwrap();
+        assert_eq!(
+            default,
+            format!(
+                "https://cdn.discordapp.com/embed/avatars/{}.png",
+                (123456789012345678u64 >> 22) % 6
+            )
+        );
+        assert_eq!(
+            avatar_url("123456789012345678", None, Some("1234")).as_deref(),
+            Some("https://cdn.discordapp.com/embed/avatars/4.png")
+        );
+    }
+
+    #[test]
+    fn only_valid_callback_can_redirect_to_tokenless_application_wakeup() {
+        let valid = b"GET /discord/callback?code=private-code&state=expected HTTP/1.1\r\nHost: 127.0.0.1:45961\r\n\r\n";
+        let accepted = matches!(parse_callback(valid, "expected"), Ok(Callback::Code(_)));
+        let response = completion_response(accepted);
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(!response.contains("Location:"));
+        assert!(response.contains("history.replaceState(null,'','/discord/complete');setTimeout(()=>location.assign('console-link://auth/complete'),150);"));
+        assert!(!response.contains("private-code"));
+        assert!(!response.contains("expected"));
+        assert!(response.contains("href=\"console-link://auth/complete\""));
+        let rejected = completion_response(matches!(
+            parse_callback(valid, "wrong-state"),
+            Ok(Callback::Code(_))
+        ));
+        assert!(rejected.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(!rejected.contains("Location:"));
+        assert!(!rejected.contains("console-link://"));
+    }
 
     #[test]
     fn offline_restore_retries_saved_credential_and_only_invalid_grant_clears_it() {
@@ -813,6 +923,7 @@ mod tests {
             status: Mutex::new(AuthStatus::Disconnected),
             intent: Mutex::new(None),
             generation: AtomicU64::new(0),
+            completion: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
         };
         let vault = FakeVault {
@@ -836,6 +947,7 @@ mod tests {
             Ok(DiscordAccount {
                 id: "123456789012345678".into(),
                 display_name: "Player".into(),
+                avatar_url: None,
             })
         });
         let session = restored_session(recovered, pending.refresh, &vault, &shared).unwrap();
@@ -891,6 +1003,7 @@ mod tests {
                 status: Mutex::new(AuthStatus::Disconnected),
                 intent: Mutex::new(None),
                 generation: AtomicU64::new(0),
+                completion: AtomicU64::new(0),
                 stopped: AtomicBool::new(false),
             };
             let vault = FakeVault {
@@ -1026,6 +1139,7 @@ mod tests {
             status: Mutex::new(AuthStatus::Disconnected),
             intent: Mutex::new(None),
             generation: AtomicU64::new(1),
+            completion: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
         };
         shared.set_status(
@@ -1033,6 +1147,7 @@ mod tests {
             AuthStatus::Connected(DiscordAccount {
                 id: "123456789012345678".into(),
                 display_name: "Old account".into(),
+                avatar_url: None,
             }),
         );
         assert_eq!(*shared.status.lock().unwrap(), AuthStatus::Disconnected);

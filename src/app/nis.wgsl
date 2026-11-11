@@ -249,8 +249,14 @@ fn AddDirFilters(p:array<array<f32,6>,6>,phase_x_frac:f32,phase_y_frac:f32,phase
 }
 
 @fragment fn nis(v:Vertex)->@location(0) vec4<f32> {
- let pos=v.position.xy*params.size.xy/params.size.zw-0.5;
- let base=vec2<i32>(floor(pos)); let phase=fract(pos);
+ // Keep exact texel boundaries independent of backend reciprocal/FMA rounding.
+ // The positive numerator represents source position + 1, including the border.
+ let input_size=vec2<u32>(params.size.xy);
+ let output_size=vec2<u32>(params.size.zw);
+ let numerator=(2u*vec2<u32>(v.position.xy)+1u)*input_size+output_size;
+ let denominator=2u*output_size;
+ let base=vec2<i32>(numerator/denominator)-1;
+ let phase=vec2<f32>(numerator%denominator)/vec2<f32>(denominator);
  var p:array<array<f32,6>,6>;
  for(var y=0;y<6;y++) { for(var x=0;x<6;x++) { p[y][x]=getY(sample(base+vec2<i32>(x-2,y-2)).rgb); } }
  let e00=GetEdgeMap(p,1,1); let e01=GetEdgeMap(p,1,2);

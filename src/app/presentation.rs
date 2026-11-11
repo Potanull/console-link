@@ -22,17 +22,17 @@ impl ConsoleApp {
             if self.snapshot_game
                 && matches!(
                     argument_value("--ui-page").as_deref(),
-                    Some("overlay" | "overlay-color")
+                    Some("overlay" | "overlay-color" | "overlay-discord")
                 )
             {
                 self.playback.overlay_open = true;
             }
             self.native_mode = None;
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-                if self.settings.game.is_empty() {
+                if self.game_name().is_empty() {
                     "Console Link - Game".into()
                 } else {
-                    format!("{} - Console Link", self.settings.game)
+                    format!("{} - Console Link", self.game_name())
                 },
             ));
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(

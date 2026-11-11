@@ -30,3 +30,4 @@ mod platform_configuration {
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
     }
 }
+pub mod nintendo;

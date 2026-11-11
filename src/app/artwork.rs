@@ -85,6 +85,7 @@ fn allowed_url(url: &str) -> bool {
                 Some(
                     "cdn.discordapp.com"
                         | "img-eshop.cdn.nintendo.net"
+                        | "atum-img-lp1.cdn.nintendo.net"
                         | "raw.githubusercontent.com"
                 )
             )
@@ -158,6 +159,9 @@ mod tests {
     }
     #[test]
     fn artwork_accepts_only_expected_public_https_hosts() {
+        assert!(allowed_url(
+            "https://atum-img-lp1.cdn.nintendo.net/example.jpg"
+        ));
         assert!(allowed_url(
             "https://cdn.discordapp.com/embed/avatars/0.png"
         ));

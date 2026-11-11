@@ -22,17 +22,17 @@ impl ConsoleApp {
             if self.snapshot_game
                 && matches!(
                     argument_value("--ui-page").as_deref(),
-                    Some("overlay" | "overlay-color")
+                    Some("overlay" | "overlay-color" | "overlay-discord")
                 )
             {
                 self.playback.overlay_open = true;
             }
             self.native_mode = None;
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-                if self.settings.game.is_empty() {
+                if self.game_name().is_empty() {
                     "Console Link - Game".into()
                 } else {
-                    format!("{} - Console Link", self.settings.game)
+                    format!("{} - Console Link", self.game_name())
                 },
             ));
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
@@ -207,7 +207,7 @@ impl ConsoleApp {
             .frame(egui::Frame::NONE.fill(Color32::BLACK))
             .show(ctx, |ui| {
                 if self.color_gpu_available {
-                    if let Some(frame) = &self.displayed {
+                    if let Some(frame) = self.displayed.clone() {
                         let available = ui.available_size();
                         let original = egui::vec2(frame.width as f32, frame.height as f32);
                         let size =
@@ -220,11 +220,8 @@ impl ConsoleApp {
                         );
                         let target = upscale_ui::viewport_size(rect, ui.ctx())
                             .unwrap_or([frame.width, frame.height]);
-                        let mut upscale = upscale_ui::effective_settings(
-                            self.settings.upscale,
-                            self.upscale_comparison,
-                        );
-                        self.upscale_error = upscale_gpu::paint_enhanced(
+                        let mut upscale = self.available_upscale_settings();
+                        let paint_error = upscale_gpu::paint_enhanced(
                             ui,
                             rect,
                             frame.clone(),
@@ -234,7 +231,8 @@ impl ConsoleApp {
                             target,
                         )
                         .err();
-                        if self.upscale_error.is_some() {
+                        if paint_error.is_some() {
+                            self.upscale_error = paint_error;
                             upscale.mode = console_link::upscale::UpscaleMode::Standard;
                             color_gpu::paint(ui, rect, frame.clone(), effective, false);
                         }

@@ -7,6 +7,19 @@ use console_link::{
 use eframe::{egui, egui_wgpu};
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::Arc;
+#[cfg(target_os = "windows")]
+#[path = "rtx_video.rs"]
+mod rtx_video;
+
+/// Lazily query the actual SDK and retain its feature on the presentation device.
+pub(super) fn rtx_status(state: &egui_wgpu::RenderState) -> Result<(), String> {
+    let mut renderer = state.renderer.write();
+    let resources = renderer
+        .callback_resources
+        .get_mut::<Resources>()
+        .ok_or("GPU processing is unavailable")?;
+    resources.rtx_status(&state.device)
+}
 
 pub(super) const MAX_TARGET_DIMENSION: u32 = 8192;
 pub(super) fn install(state: &egui_wgpu::RenderState) {
@@ -36,9 +49,6 @@ fn validate(
         return Err(format!("GPU texture limit is {limit} pixels per dimension"));
     }
     let mode = settings.effective_mode([frame.width, frame.height], target);
-    if mode == UpscaleMode::RtxVideo {
-        return Err("RTX Video SDK is unavailable".into());
-    }
     if mode == UpscaleMode::Nis
         && (u64::from(target[0]) > u64::from(frame.width) * 2
             || u64::from(target[1]) > u64::from(frame.height) * 2)
@@ -145,6 +155,9 @@ struct Resources {
     sharpened: Option<Target>,
     last_mode: UpscaleMode,
     last_recipe: Option<Recipe>,
+    #[cfg(target_os = "windows")]
+    rtx: Option<Result<Arc<std::sync::Mutex<rtx_video::Session>>, String>>,
+    rtx_error: Option<String>,
 }
 impl Resources {
     fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
@@ -274,6 +287,31 @@ impl Resources {
             sharpened: None,
             last_mode: UpscaleMode::Standard,
             last_recipe: None,
+            #[cfg(target_os = "windows")]
+            rtx: None,
+            rtx_error: None,
+        }
+    }
+    fn rtx_status(&mut self, device: &wgpu::Device) -> Result<(), String> {
+        if let Some(error) = &self.rtx_error {
+            return Err(error.clone());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let session = self
+                .rtx
+                .get_or_insert_with(|| rtx_video::Session::get(device));
+            session
+                .as_ref()
+                .map_err(Clone::clone)?
+                .lock()
+                .map_err(|_| "RTX Video session lock failed")?
+                .status()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = device;
+            Err("RTX Video requires Windows and an NVIDIA RTX GPU".into())
         }
     }
     fn target(&self, device: &wgpu::Device, size: [u32; 2], uniform: &wgpu::Buffer) -> Target {
@@ -290,7 +328,8 @@ impl Resources {
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::STORAGE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
@@ -392,6 +431,27 @@ impl Resources {
                 0.0,
             ],
         );
+        if mode == UpscaleMode::RtxVideo {
+            let result = self
+                .rtx_status(device)
+                .and_then(|()| self.evaluate_rtx(device, queue, settings.rtx_quality));
+            match result {
+                Ok(()) => {
+                    self.last_mode = UpscaleMode::RtxVideo;
+                    self.last_recipe = Some(Recipe {
+                        frame: frame.clone(),
+                        color,
+                        original,
+                        settings,
+                        target,
+                    });
+                    return;
+                }
+                Err(error) => {
+                    self.rtx_error = Some(error);
+                }
+            }
+        }
         let graded = self.graded.as_ref().unwrap();
         {
             let mut pass = begin_pass(encoder, &graded.view, "Source resolution color grade");
@@ -418,7 +478,11 @@ impl Resources {
                 "FSR RCAS",
             );
         }
-        self.last_mode = mode;
+        self.last_mode = if mode == UpscaleMode::RtxVideo {
+            UpscaleMode::Standard
+        } else {
+            mode
+        };
         self.last_recipe = Some(Recipe {
             frame: Arc::clone(frame),
             color,
@@ -426,6 +490,60 @@ impl Resources {
             settings,
             target,
         });
+    }
+    fn evaluate_rtx(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        quality: u32,
+    ) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            let graded = self.graded.as_ref().unwrap();
+            let output = self.reconstructed.as_ref().unwrap();
+            let mut preparation = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("RTX grade and handoff"),
+            });
+            {
+                let mut pass = begin_pass(&mut preparation, &graded.view, "RTX source grade");
+                self.grade.draw(&mut pass);
+            }
+            // Mark the output initialized in wgpu before the native writer, preventing a later lazy clear.
+            drop(begin_pass(
+                &mut preparation,
+                &output.view,
+                "RTX output initialization",
+            ));
+            preparation.transition_resources(
+                std::iter::empty(),
+                [&graded.texture, &output.texture]
+                    .into_iter()
+                    .map(|texture| wgpu::TextureTransition {
+                        texture,
+                        selector: None,
+                        state: wgpu::TextureUses::PRESENT,
+                    }),
+            );
+            self.rtx
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .map_err(Clone::clone)?
+                .lock()
+                .map_err(|_| "RTX Video session lock failed")?
+                .evaluate(
+                    queue,
+                    preparation.finish(),
+                    &graded.texture,
+                    &output.texture,
+                    quality,
+                )
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (device, queue, quality);
+            Err("RTX Video requires Windows and an NVIDIA RTX GPU".into())
+        }
     }
     fn output(&self) -> &Target {
         if self.last_mode == UpscaleMode::Fsr1 {
@@ -535,6 +653,9 @@ pub(super) fn render_export(
         settings,
         target,
     );
+    if let Some(error) = &resources.rtx_error {
+        return Err(error.clone());
+    }
     readback(device, queue, encoder, &resources.output().texture, target)
 }
 fn readback(
@@ -619,6 +740,220 @@ mod tests {
             .expect("Spatial tests require actual GPU");
         eprintln!("Spatial adapter: {:?}", adapter.get_info());
         block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap()
+    }
+    #[test]
+    #[ignore = "Requires packaged RTX Video runtime and NVIDIA RTX hardware"]
+    fn real_gpu_rtx_evaluation() {
+        let (device, queue) = gpu();
+        let frame = Arc::new(VideoFrame {
+            width: 1920,
+            height: 1080,
+            rgba: [73, 113, 193, 255].repeat(1920 * 1080),
+            timestamp_ns: 0,
+        });
+        let rgba = render_export(
+            &device,
+            &queue,
+            frame,
+            ColorSettings::default(),
+            UpscaleSettings {
+                mode: UpscaleMode::RtxVideo,
+                ..Default::default()
+            },
+            [2560, 1440],
+        )
+        .expect("Genuine RTX Video evaluation");
+        assert_eq!(rgba.len(), 2560 * 1440 * 4);
+        for px in rgba.as_chunks::<4>().0 {
+            assert!(
+                px[0].abs_diff(73) < 8
+                    && px[1].abs_diff(113) < 8
+                    && px[2].abs_diff(193) < 8
+                    && px[3] == 255,
+                "{px:?}"
+            );
+        }
+    }
+    #[test]
+    fn rtx_error_falls_back_to_graded_standard() {
+        let (device, queue) = gpu();
+        let mut resources = Resources::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+        resources.rtx_error = Some("RTX Video test failure".into());
+        let frame = Arc::new(VideoFrame {
+            width: 9,
+            height: 7,
+            rgba: [73, 113, 193, 255].repeat(63),
+            timestamp_ns: 0,
+        });
+        let color = ColorSettings {
+            enabled: true,
+            exposure: 0.25,
+            ..Default::default()
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        resources.update(
+            &device,
+            &queue,
+            &mut encoder,
+            &frame,
+            color,
+            false,
+            UpscaleSettings {
+                mode: UpscaleMode::RtxVideo,
+                ..Default::default()
+            },
+            [17, 13],
+        );
+        assert_eq!(resources.last_mode, UpscaleMode::Standard);
+        assert_eq!(
+            resources.rtx_status(&device).unwrap_err(),
+            "RTX Video test failure"
+        );
+        let actual = readback(
+            &device,
+            &queue,
+            encoder,
+            &resources.output().texture,
+            [17, 13],
+        )
+        .unwrap();
+        let expected = render_export(
+            &device,
+            &queue,
+            frame,
+            color,
+            UpscaleSettings::default(),
+            [17, 13],
+        )
+        .unwrap();
+        assert!(actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1));
+    }
+    #[test]
+    #[ignore = "Requires packaged RTX Video runtime and NVIDIA RTX hardware"]
+    fn real_gpu_rtx_pattern_resize_quality_and_concurrent_export() {
+        let (device, queue) = gpu();
+        let mut resources = Resources::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+        let mut rgba = Vec::with_capacity(640 * 360 * 4);
+        for y in 0..360 {
+            for x in 0..640 {
+                let edge = if (x / 7 + y / 7) % 2 == 0 { 35 } else { 218 };
+                rgba.extend_from_slice(&[edge, (x * 255 / 639) as u8, (y * 255 / 359) as u8, 255]);
+            }
+        }
+        let frame = Arc::new(VideoFrame {
+            width: 640,
+            height: 360,
+            rgba,
+            timestamp_ns: 0,
+        });
+        let settings = UpscaleSettings {
+            mode: UpscaleMode::RtxVideo,
+            ..Default::default()
+        };
+        for quality in 1..=4 {
+            let target = if quality % 2 == 0 {
+                [960, 540]
+            } else {
+                [1280, 720]
+            };
+            let mut encoder = device.create_command_encoder(&Default::default());
+            resources.update(
+                &device,
+                &queue,
+                &mut encoder,
+                &frame,
+                ColorSettings::default(),
+                false,
+                UpscaleSettings {
+                    rtx_quality: quality,
+                    ..settings
+                },
+                target,
+            );
+            assert_eq!(
+                resources.last_mode,
+                UpscaleMode::RtxVideo,
+                "{:?}",
+                resources.rtx_error
+            );
+            let actual = readback(
+                &device,
+                &queue,
+                encoder,
+                &resources.output().texture,
+                target,
+            )
+            .unwrap();
+            let standard = render_export(
+                &device,
+                &queue,
+                frame.clone(),
+                ColorSettings::default(),
+                UpscaleSettings::default(),
+                target,
+            )
+            .unwrap();
+            let changed = actual
+                .iter()
+                .zip(&standard)
+                .filter(|(a, b)| a.abs_diff(**b) > 2)
+                .count();
+            eprintln!(
+                "RTX quality {quality} {target:?}: {changed} channels differ >2/255 from Standard"
+            );
+            assert!(
+                changed > actual.len() / 100,
+                "VSR must actually process patterned pixels"
+            );
+        }
+        let export_frame = frame.clone();
+        let export_device = device.clone();
+        let export_queue = queue.clone();
+        let export = std::thread::spawn(move || {
+            render_export(
+                &export_device,
+                &export_queue,
+                export_frame,
+                ColorSettings::default(),
+                settings,
+                [960, 540],
+            )
+            .unwrap()
+        });
+        for n in 0..12 {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            resources.update(
+                &device,
+                &queue,
+                &mut encoder,
+                &frame,
+                ColorSettings::default(),
+                false,
+                settings,
+                if n % 2 == 0 { [1280, 720] } else { [960, 540] },
+            );
+            assert_eq!(
+                resources.last_mode,
+                UpscaleMode::RtxVideo,
+                "{:?}",
+                resources.rtx_error
+            );
+            queue.submit([encoder.finish()]);
+        }
+        let actual = export.join().unwrap();
+        let expected = render_export(
+            &device,
+            &queue,
+            frame,
+            ColorSettings::default(),
+            settings,
+            [960, 540],
+        )
+        .unwrap();
+        assert_eq!(
+            actual, expected,
+            "Frozen export must survive concurrent playback resize"
+        );
     }
     #[test]
     fn real_gpu_spatial_constant_patterns_and_reuse() {
@@ -754,7 +1089,7 @@ mod tests {
                 },
                 8192
             )
-            .is_err()
+            .is_ok()
         );
     }
     #[test]
@@ -816,12 +1151,14 @@ mod tests {
             .unwrap();
         eprintln!("EASU reconstruction max difference: {easu_error}/255");
         assert!(easu_error <= 1);
+        let mut reference_failures = Vec::new();
         for (mode, expected) in fixtures {
             for (index, sharpness) in [0.0, 0.3, 1.0].into_iter().enumerate() {
                 let settings = UpscaleSettings {
                     mode,
                     nis_sharpness: sharpness,
                     fsr_sharpness: sharpness,
+                    ..Default::default()
                 };
                 let output = render_export(
                     &device,
@@ -848,10 +1185,25 @@ mod tests {
                 } else {
                     2
                 };
-                assert!(
-                    *max <= tolerance && mean < 0.1,
-                    "{mode:?} sharpness {sharpness}: max {max}, mean {mean}"
-                );
+                if *max > tolerance || mean >= 0.1 {
+                    let worst: Vec<_> = differences
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, difference)| **difference > tolerance)
+                        .take(20)
+                        .map(|(i, difference)| {
+                            (
+                                i / 4 % 29,
+                                i / 4 / 29,
+                                i % 4,
+                                output[i],
+                                expected[index][i],
+                                difference,
+                            )
+                        })
+                        .collect();
+                    reference_failures.push(format!("{mode:?} sharpness {sharpness}: max {max}, mean {mean}; (x,y,channel,actual,expected,delta): {worst:?}"));
+                }
             }
             let color = ColorSettings {
                 enabled: true,
@@ -898,6 +1250,11 @@ mod tests {
             std::fs::remove_file(path).unwrap();
             std::fs::remove_dir(directory).unwrap();
         }
+        assert!(
+            reference_failures.is_empty(),
+            "{}",
+            reference_failures.join("\n")
+        );
     }
     #[test]
     #[ignore = "Synthetic GPU component throughput benchmark; run explicitly on target hardware"]
@@ -940,7 +1297,12 @@ mod tests {
             view_formats: &[],
         });
         let view = output.create_view(&Default::default());
-        for mode in [UpscaleMode::Standard, UpscaleMode::Nis, UpscaleMode::Fsr1] {
+        for mode in [
+            UpscaleMode::Standard,
+            UpscaleMode::Nis,
+            UpscaleMode::Fsr1,
+            UpscaleMode::RtxVideo,
+        ] {
             for graded in [false, true] {
                 let color = ColorSettings {
                     enabled: graded,
@@ -979,6 +1341,7 @@ mod tests {
                                 settings,
                                 [2560, 1440],
                             );
+                            assert_eq!(spatial.last_mode, mode, "{:?}", spatial.rtx_error);
                             let mut pass = begin_pass(&mut encoder, &view, "Benchmark enhanced");
                             spatial.draw(&mut pass);
                         }
@@ -993,6 +1356,26 @@ mod tests {
                     if batch >= 5 {
                         samples.push(start.elapsed().as_secs_f64() * 1000.0 / 4.0);
                     }
+                }
+                #[cfg(target_os = "windows")]
+                if mode == UpscaleMode::RtxVideo {
+                    let mut session = spatial
+                        .rtx
+                        .as_ref()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .unwrap();
+                    let mut gpu = session.take_gpu_timings().unwrap();
+                    gpu.drain(..20);
+                    gpu.sort_by(f64::total_cmp);
+                    eprintln!(
+                        "GPU-EVAL RTX quality2 grading={graded}: median {:.3}ms p95 {:.3}ms ({} warmed native timestamp samples; VSR only)",
+                        gpu[gpu.len() / 2],
+                        gpu[gpu.len() * 95 / 100],
+                        gpu.len()
+                    );
                 }
                 samples.sort_by(f64::total_cmp);
                 eprintln!(

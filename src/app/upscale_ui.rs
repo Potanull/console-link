@@ -18,7 +18,7 @@ mod tests {
         assert_eq!(physical_size(egui::vec2(f32::NAN, 720.0), 1.0), None);
     }
     #[test]
-    fn comparison_and_missing_rtx_keep_requested_settings() {
+    fn comparison_keeps_requested_settings() {
         let settings = UpscaleSettings {
             mode: UpscaleMode::Nis,
             ..Default::default()
@@ -33,7 +33,7 @@ mod tests {
             mode: UpscaleMode::RtxVideo,
             ..settings
         };
-        assert_eq!(effective_settings(rtx, false).mode, UpscaleMode::Standard);
+        assert_eq!(effective_settings(rtx, false).mode, UpscaleMode::RtxVideo);
     }
 }
 
@@ -56,7 +56,7 @@ pub(super) fn effective_settings(
     comparison: bool,
 ) -> UpscaleSettings {
     settings.normalize();
-    if comparison || settings.mode == UpscaleMode::RtxVideo {
+    if comparison {
         settings.mode = UpscaleMode::Standard;
     }
     settings
@@ -80,6 +80,25 @@ pub(super) struct PresentedImage {
 }
 
 impl ConsoleApp {
+    pub(super) fn available_upscale_settings(&mut self) -> UpscaleSettings {
+        let mut settings = effective_settings(self.settings.upscale, self.upscale_comparison);
+        self.upscale_error = None;
+        if settings.mode == UpscaleMode::RtxVideo {
+            let result = self
+                .export_gpu
+                .as_ref()
+                .ok_or_else(|| "GPU недоступен".to_owned())
+                .and_then(upscale_gpu::rtx_status);
+            if let Err(error) = result {
+                self.upscale_error = Some(format!(
+                    "RTX Video недоступен: {error}. Используется обычное масштабирование."
+                ));
+                settings.mode = UpscaleMode::Standard;
+            }
+        }
+        settings
+    }
+
     pub(super) fn upscale_controls(&mut self, ui: &mut egui::Ui, compact: bool) {
         let before = self.settings.upscale;
         theme::card().inner_margin(if compact {12} else {18}).show(ui, |ui| {
@@ -88,10 +107,9 @@ impl ConsoleApp {
             ui.add_enabled_ui(self.color_gpu_available, |ui| {
                 egui::ComboBox::from_id_salt("upscale-mode").width(ui.available_width().min(300.0))
                     .selected_text(mode_name(self.settings.upscale.mode)).show_ui(ui, |ui| {
-                        for mode in [UpscaleMode::Standard, UpscaleMode::Nis, UpscaleMode::Fsr1] {
+                        for mode in [UpscaleMode::Standard, UpscaleMode::Nis, UpscaleMode::Fsr1, UpscaleMode::RtxVideo] {
                             ui.selectable_value(&mut self.settings.upscale.mode, mode, mode_name(mode));
                         }
-                        ui.add_enabled(false, egui::Button::new("RTX Video · пока недоступен"));
                     });
                 let sharpness = match self.settings.upscale.mode {
                     UpscaleMode::Nis => Some(&mut self.settings.upscale.nis_sharpness),
@@ -102,12 +120,23 @@ impl ConsoleApp {
                     ui.label("Резкость");
                     ui.spacing_mut().slider_width = (ui.available_width() - 65.0).max(40.0);
                     ui.add(egui::Slider::new(sharpness, 0.0..=1.0).fixed_decimals(2));
+
+                }
+                if self.settings.upscale.mode == UpscaleMode::RtxVideo {
+                    egui::ComboBox::from_id_salt("rtx-quality")
+                        .selected_text(match self.settings.upscale.rtx_quality { 1 => "Быстрое", 3 => "Высокое", 4 => "Максимальное", _ => "Сбалансированное" })
+                        .show_ui(ui, |ui| {
+                            for (value, label) in [(1, "Быстрое"), (2, "Сбалансированное"), (3, "Высокое"), (4, "Максимальное")] {
+                                ui.selectable_value(&mut self.settings.upscale.rtx_quality, value, label);
+                            }
+                        });
+                    theme::subtitle(ui, "Более высокое качество увеличивает нагрузку на GPU. Для плавной игры начни со сбалансированного.");
+                }
+                if self.settings.upscale.mode != UpscaleMode::Standard {
                     theme::toggle(ui, &mut self.upscale_comparison, "Сравнить с обычным масштабированием");
                 }
             });
-            if self.settings.upscale.mode == UpscaleMode::RtxVideo {
-                theme::subtitle(ui, "RTX Video пока недоступен: необходим официальный SDK и его интеграция. Сейчас используется обычный фильтр.");
-            } else if self.upscale_comparison {
+            if self.upscale_comparison {
                 theme::subtitle(ui, "Сравнение: обычный фильтр. Цветокоррекция сохранена.");
             }
             let status = if self.playback.playing || self.snapshot_game {

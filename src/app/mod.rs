@@ -7,6 +7,7 @@ mod color_integration;
 mod color_page;
 mod equalizer;
 mod monitoring;
+mod nintendo;
 mod pages;
 mod presentation;
 mod session;
@@ -120,7 +121,7 @@ pub struct ConsoleApp {
     upscale_comparison: bool,
     upscale_error: Option<String>,
     upscale_preview_status: Option<upscale_ui::DisplayStatus>,
-    export_gpu: Option<(wgpu::Device, wgpu::Queue)>,
+    export_gpu: Option<eframe::egui_wgpu::RenderState>,
     notice: Option<String>,
     error: Option<String>,
     last_frame: Instant,
@@ -138,6 +139,7 @@ pub struct ConsoleApp {
     snapshot_cycle: bool,
     snapshot_cycle_closed: bool,
     discord: DiscordWorker,
+    nintendo: nintendo::NintendoState,
     discord_auth: Option<DiscordAuth>,
     auth_completion: u64,
     eq_selected: Option<usize>,
@@ -189,14 +191,14 @@ impl ConsoleApp {
         let snapshot_game = snapshot_path.is_some()
             && matches!(
                 argument_value("--ui-page").as_deref(),
-                Some("overlay" | "overlay-color" | "gameplay" | "volume")
+                Some("overlay" | "overlay-color" | "overlay-discord" | "gameplay" | "volume")
             );
         let snapshot_game = snapshot_game || snapshot_cycle;
         let page = match argument_value("--ui-page").as_deref() {
             Some("overlay") => Page::Audio,
             Some("audio") => Page::Audio,
             Some("color" | "overlay-color") => Page::Color,
-            Some("discord") => Page::Discord,
+            Some("discord" | "overlay-discord") => Page::Discord,
             Some("settings") => Page::Settings,
             _ => Page::Session,
         };
@@ -246,10 +248,7 @@ impl ConsoleApp {
             upscale_comparison: false,
             upscale_error: None,
             upscale_preview_status: None,
-            export_gpu: context
-                .wgpu_render_state
-                .as_ref()
-                .map(|s| (s.device.clone(), s.queue.clone())),
+            export_gpu: context.wgpu_render_state.as_ref().cloned(),
             notice: warning,
             error: None,
             last_frame: Instant::now(),
@@ -267,6 +266,7 @@ impl ConsoleApp {
             snapshot_cycle,
             snapshot_cycle_closed: false,
             discord,
+            nintendo: nintendo::NintendoState::default(),
             discord_auth,
             auth_completion: 0,
             eq_selected: None,
@@ -309,8 +309,16 @@ impl ConsoleApp {
             };
             app.playback.overlay_open = matches!(
                 argument_value("--ui-page").as_deref(),
-                Some("overlay" | "overlay-color")
+                Some("overlay" | "overlay-color" | "overlay-discord")
             );
+        }
+        if app.snapshot_path.is_some() && std::env::args().any(|a| a == "--ui-nintendo-live") {
+            app.settings.nintendo_enabled = true;
+        }
+        if app.snapshot_path.is_some() && std::env::args().any(|a| a == "--ui-nintendo-preview") {
+            app.settings.nintendo_enabled = true;
+            app.settings.nintendo_friend_id = "0123456789abcdef".into();
+            app.nintendo.preview();
         }
         if app.snapshot_path.is_some() {
             app.settings.upscale.mode = match argument_value("--ui-upscale-mode").as_deref() {
@@ -394,7 +402,15 @@ impl eframe::App for ConsoleApp {
             }
             if !self.snapshot_requested
                 && self.started.elapsed()
-                    > Duration::from_millis(if self.snapshot_cycle { 3600 } else { 1200 })
+                    > Duration::from_millis(
+                        if std::env::args().any(|a| a == "--ui-nintendo-live") {
+                            8000
+                        } else if self.snapshot_cycle {
+                            3600
+                        } else {
+                            1200
+                        },
+                    )
             {
                 if self.snapshot_cycle && (self.playback.playing || self.snapshot_game) {
                     eprintln!("Game-to-menu presentation cycle failed");
@@ -423,6 +439,7 @@ impl eframe::App for ConsoleApp {
             self.snapshot_game = false;
         }
         let previous_volume = (self.settings.gain, self.settings.muted);
+        self.poll_nintendo(ctx);
         self.events(ctx);
         if let Some(started) = self.session_started {
             let peak = self

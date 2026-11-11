@@ -53,6 +53,8 @@ pub struct Settings {
     pub equalizer: EqualizerSettings,
     pub equalizer_presets: Vec<EqualizerPreset>,
     pub game: String,
+    pub nintendo_enabled: bool,
+    pub nintendo_friend_id: String,
     pub discord_enabled: bool,
     pub discord_application_id: String,
     pub screenshot_dir: PathBuf,
@@ -80,6 +82,8 @@ impl Default for Settings {
             equalizer: EqualizerSettings::default(),
             equalizer_presets: Vec::new(),
             game: String::new(),
+            nintendo_enabled: false,
+            nintendo_friend_id: String::new(),
             discord_enabled: false,
             discord_application_id: String::new(),
             screenshot_dir,
@@ -148,6 +152,14 @@ impl Settings {
             !preset.name.is_empty() && names.insert(preset.name.to_lowercase())
         });
         settings.game = settings.game.chars().take(128).collect();
+        if settings.nintendo_friend_id.len() != 16
+            || !settings
+                .nintendo_friend_id
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+        {
+            settings.nintendo_friend_id.clear();
+        }
         Ok(settings)
     }
 }
@@ -229,6 +241,24 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nintendo_preferences_are_opt_in_and_preserve_manual_game() {
+        let legacy = Settings::parse(r#"{"schema_version":1,"game":"Manual Game"}"#).unwrap();
+        assert!(!legacy.nintendo_enabled);
+        assert!(legacy.nintendo_friend_id.is_empty());
+        let configured = Settings::parse(r#"{"schema_version":1,"game":"Manual Game","nintendo_enabled":true,"nintendo_friend_id":"0123456789abcdef"}"#).unwrap();
+        let decoded = Settings::parse(&serde_json::to_string(&configured).unwrap()).unwrap();
+        assert_eq!(decoded.game, "Manual Game");
+        assert!(decoded.nintendo_enabled);
+        assert_eq!(decoded.nintendo_friend_id, "0123456789abcdef");
+        assert!(
+            Settings::parse(r#"{"schema_version":1,"nintendo_friend_id":"invalid"}"#)
+                .unwrap()
+                .nintendo_friend_id
+                .is_empty()
+        );
+    }
 
     #[test]
     fn legacy_settings_gain_automatic_sixty_fps_and_windowed_default() {

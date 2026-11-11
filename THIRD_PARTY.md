@@ -328,3 +328,10 @@ Inter Variable, SIL Open Font License 1.1. Источник: https://github.com/
 ## Spatial upscaling shaders
 
 NVIDIA Image Scaling 35e13ba316c98eeecf16f37eae70ce88019911f6 (MIT) and GPUOpen FidelityFX-FSR a21ffb8f6c13233ba336352bdff293894c706575 (MIT). Original sources, coefficient tables and full licenses retained in src/app/vendor. WGSL ports retain vendor equations; see docs/superpowers/plans/upscaling-task1-report.md.
+
+
+## Optional NVIDIA RTX Video runtime
+
+RTX Video SDK 1.1.0 is proprietary and is not covered by this repository's MIT license. Optional Windows packages include the release `nvngx_vsr.dll` and `console_link_ngx.dll`, a C-export bridge linked from the SDK's official static dispatch library. The complete `NVIDIA_RTX_Video_SDK_License.pdf` accompanies those binaries. SDK headers, libraries, samples and development runtime are not vendored. Obtain the SDK from NVIDIA and review its distribution terms before distributing packages containing it.
+
+This software contains source code provided by NVIDIA Corporation. Integration follows the SDK's documented DX12 API and sample resource/parameter conventions.

@@ -10,6 +10,8 @@ mod monitoring;
 mod pages;
 mod presentation;
 mod session;
+mod upscale_gpu;
+mod upscale_ui;
 mod widgets;
 
 use widgets::{audio_combo, card_title, level_meter, message};
@@ -114,8 +116,11 @@ pub struct ConsoleApp {
     color_name: String,
     color_original: bool,
     color_test_pattern: Arc<VideoFrame>,
-    presented_frame: Option<Arc<VideoFrame>>,
-    presented_color: console_link::color::ColorSettings,
+    presented_image: Option<upscale_ui::PresentedImage>,
+    upscale_comparison: bool,
+    upscale_error: Option<String>,
+    upscale_preview_status: Option<upscale_ui::DisplayStatus>,
+    export_gpu: Option<(wgpu::Device, wgpu::Queue)>,
     notice: Option<String>,
     error: Option<String>,
     last_frame: Instant,
@@ -237,8 +242,14 @@ impl ConsoleApp {
             color_name: String::new(),
             color_original: false,
             color_test_pattern: color_integration::test_pattern(),
-            presented_frame: None,
-            presented_color: console_link::color::ColorSettings::default(),
+            presented_image: None,
+            upscale_comparison: false,
+            upscale_error: None,
+            upscale_preview_status: None,
+            export_gpu: context
+                .wgpu_render_state
+                .as_ref()
+                .map(|s| (s.device.clone(), s.queue.clone())),
             notice: warning,
             error: None,
             last_frame: Instant::now(),
@@ -302,6 +313,12 @@ impl ConsoleApp {
             );
         }
         if app.snapshot_path.is_some() {
+            app.settings.upscale.mode = match argument_value("--ui-upscale-mode").as_deref() {
+                Some("nis") => console_link::upscale::UpscaleMode::Nis,
+                Some("fsr1") => console_link::upscale::UpscaleMode::Fsr1,
+                Some("rtx") => console_link::upscale::UpscaleMode::RtxVideo,
+                _ => console_link::upscale::UpscaleMode::Standard,
+            };
             if let Some(name) = argument_value("--ui-color-preset")
                 && let Some((_, preset)) = console_link::color::FACTORY_PRESETS
                     .iter()

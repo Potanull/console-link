@@ -323,3 +323,8 @@ Inter Variable, SIL Open Font License 1.1. Источник: https://github.com/
 ## Эквалайзер
 
 Реализация peaking biquad использует формулы [W3C Audio EQ Cookbook](https://www.w3.org/TR/audio-eq-cookbook/). Модели OCR больше не загружаются и не используются. Исторические тексты лицензий сохранены в THIRD_PARTY_LICENSES.txt.
+
+
+## Spatial upscaling shaders
+
+NVIDIA Image Scaling 35e13ba316c98eeecf16f37eae70ce88019911f6 (MIT) and GPUOpen FidelityFX-FSR a21ffb8f6c13233ba336352bdff293894c706575 (MIT). Original sources, coefficient tables and full licenses retained in src/app/vendor. WGSL ports retain vendor equations; see docs/superpowers/plans/upscaling-task1-report.md.

@@ -154,7 +154,7 @@ impl ConsoleApp {
         self.history.clear();
         self.displayed = None;
         self.texture = None;
-        self.presented_frame = None;
+        self.presented_image = None;
         self.color_original = false;
         while self.frames_rx.try_recv().is_ok() {}
         self.discord.set(None);
@@ -400,21 +400,50 @@ impl ConsoleApp {
     }
     pub(super) fn screenshot_with_color(&mut self, ctx: egui::Context, original: bool) {
         if self.screenshot_pending {
+            self.notice = Some("Скриншот уже сохраняется…".into());
             return;
         }
-        let Some(frame) = self.presented_frame.clone() else {
+        let Some(image) = self.presented_image.clone() else {
             return;
-        };
-        let color = if original {
-            console_link::color::ColorSettings::default()
-        } else {
-            self.presented_color
         };
         self.screenshot_pending = true;
         let directory = self.settings.screenshot_dir.clone();
         let tx = self.tx.clone();
+        let gpu = self.export_gpu.clone();
         std::thread::spawn(move || {
-            let result = color_integration::save_screenshot(&frame, &color, original, &directory);
+            let result = if original {
+                color_integration::save_screenshot(
+                    &image.frame,
+                    &Default::default(),
+                    true,
+                    &directory,
+                )
+            } else if let Some((device, queue)) = gpu {
+                upscale_gpu::render_export(
+                    &device,
+                    &queue,
+                    image.frame.clone(),
+                    image.color,
+                    image.upscale,
+                    image.target,
+                )
+                .and_then(|rgba| {
+                    let output = VideoFrame {
+                        width: image.target[0],
+                        height: image.target[1],
+                        rgba,
+                        timestamp_ns: image.frame.timestamp_ns,
+                    };
+                    color_integration::save_screenshot(
+                        &output,
+                        &Default::default(),
+                        false,
+                        &directory,
+                    )
+                })
+            } else {
+                Err("GPU-экспорт недоступен. Можно сохранить исходный кадр.".into())
+            };
             let _ = tx.send(Event::Screenshot(result));
             ctx.request_repaint();
         });
@@ -544,7 +573,7 @@ impl ConsoleApp {
                         }
                     });
                     ui.add_enabled_ui(
-                        self.presented_frame.is_some() && !self.screenshot_pending,
+                        self.presented_image.is_some() && !self.screenshot_pending,
                         |ui| {
                             ui.menu_button("Ещё", |ui| {
                                 if ui.button("Сохранить исходный кадр").clicked()

@@ -15,13 +15,41 @@ impl ConsoleApp {
         let size = egui::vec2(width, width * 9.0 / 16.0);
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
         if self.color_gpu_available {
-            color_gpu::paint(
+            let target = upscale_ui::viewport_size(rect, ui.ctx()).unwrap_or([512, 288]);
+            self.upscale_error = upscale_gpu::paint_enhanced(
                 ui,
                 rect,
                 self.color_test_pattern.clone(),
                 self.settings.color,
                 self.color_original,
-            );
+                upscale_ui::effective_settings(self.settings.upscale, self.upscale_comparison),
+                target,
+            )
+            .err();
+            if self.upscale_error.is_some() {
+                color_gpu::paint(
+                    ui,
+                    rect,
+                    self.color_test_pattern.clone(),
+                    self.settings.color,
+                    self.color_original,
+                );
+            }
+            let source = [
+                self.color_test_pattern.width,
+                self.color_test_pattern.height,
+            ];
+            let mode = if self.upscale_error.is_some() {
+                console_link::upscale::UpscaleMode::Standard
+            } else {
+                upscale_ui::effective_settings(self.settings.upscale, self.upscale_comparison)
+                    .effective_mode(source, target)
+            };
+            self.upscale_preview_status = Some(upscale_ui::DisplayStatus {
+                source,
+                target,
+                mode,
+            });
         } else {
             let texture = ui.ctx().load_texture(
                 "color-test-pattern",

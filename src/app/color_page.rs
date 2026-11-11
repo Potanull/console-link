@@ -23,6 +23,7 @@ impl ConsoleApp {
                     theme::subtitle(ui,"Сгенерированная шкала SDR. Подключи консоль, чтобы настроить изображение во время игры через F1.");
                 });
                 ui.add_space(8.0);
+
                 ui.vertical(|ui| {ui.set_width(controls_width);self.color_controls(ui,false);});
             });
         } else {
@@ -37,6 +38,7 @@ impl ConsoleApp {
     }
 
     fn color_controls(&mut self, ui: &mut egui::Ui, compact: bool) {
+        self.upscale_controls(ui, compact);
         if !self.color_gpu_available {
             theme::subtitle(
                 ui,
@@ -86,16 +88,16 @@ impl ConsoleApp {
             self.dirty = Some(Instant::now());
         }
         ui.add_space(8.0);
+        if self.screenshot_pending {
+            theme::subtitle(ui, "Скриншот сохраняется…");
+        }
         ui.horizontal_wrapped(|ui| {
-            let source = self.displayed.is_some();
+            let source = self.displayed.is_some() && !self.screenshot_pending;
             if ui
                 .add_enabled(source, egui::Button::new("Скриншот текущего вида"))
                 .clicked()
             {
-                self.screenshot_with_color(
-                    ui.ctx().clone(),
-                    self.color_original || !self.color_gpu_available,
-                );
+                self.screenshot_with_color(ui.ctx().clone(), false);
             }
             if ui
                 .add_enabled(source, egui::Button::new("Сохранить оригинал"))

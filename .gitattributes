@@ -1,0 +1,3 @@
+# Pixel references and shader coefficient banks must survive Windows checkout unchanged.
+*.rgba binary
+*.bin binary

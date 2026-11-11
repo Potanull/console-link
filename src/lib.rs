@@ -6,6 +6,7 @@ pub mod config;
 pub mod discord;
 pub mod monitoring;
 pub mod settings;
+pub mod upscale;
 
 #[cfg(test)]
 mod platform_configuration {

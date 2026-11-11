@@ -5,6 +5,7 @@ use eframe::{egui, egui_wgpu};
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 
 pub(super) fn install(state: &egui_wgpu::RenderState) {
+    super::upscale_gpu::install(state);
     let resources = Resources::new(&state.device, state.target_format);
     state.renderer.write().callback_resources.insert(resources);
 }
@@ -68,7 +69,7 @@ struct Source {
     bind_group: wgpu::BindGroup,
     size: [u32; 2],
 }
-struct Resources {
+pub(super) struct Resources {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -80,7 +81,7 @@ struct Resources {
     last_frame: Option<Arc<VideoFrame>>,
 }
 impl Resources {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub(super) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Video color bindings"),
             entries: &[
@@ -171,7 +172,7 @@ impl Resources {
             last_frame: None,
         }
     }
-    fn update(
+    pub(super) fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -254,7 +255,7 @@ impl Resources {
             self.last_uniform = Some(values);
         }
     }
-    fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         if let Some(source) = &self.source {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &source.bind_group, &[]);

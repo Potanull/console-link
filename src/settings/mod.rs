@@ -48,6 +48,7 @@ pub struct Settings {
     pub muted: bool,
     pub sync_ms: i32,
     pub color: ColorSettings,
+    pub upscale: crate::upscale::UpscaleSettings,
     pub color_presets: Vec<ColorPreset>,
     pub equalizer: EqualizerSettings,
     pub equalizer_presets: Vec<EqualizerPreset>,
@@ -74,6 +75,7 @@ impl Default for Settings {
             muted: false,
             sync_ms: 0,
             color: ColorSettings::default(),
+            upscale: crate::upscale::UpscaleSettings::default(),
             color_presets: Vec::new(),
             equalizer: EqualizerSettings::default(),
             equalizer_presets: Vec::new(),
@@ -137,6 +139,7 @@ impl Settings {
             !preset.name.is_empty() && names.insert(preset.name.to_lowercase())
         });
         settings.color.normalize();
+        settings.upscale.normalize();
         settings.color_presets.truncate(64);
         let mut names = std::collections::HashSet::new();
         settings.color_presets.retain_mut(|preset| {
@@ -433,5 +436,25 @@ mod color_atomic_storage_regressions {
         let (_, settings, _) = SettingsStore::open_path(path.clone());
         assert!(settings.color_presets.is_empty());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod upscale_persistence {
+    use super::*;
+    #[test]
+    fn legacy_defaults_and_upscale_modes_roundtrip() {
+        let old = Settings::parse(r#"{"schema_version":1,"game":"Saved game"}"#).unwrap();
+        let value = serde_json::to_value(&old).unwrap();
+        assert_eq!(value["upscale"]["mode"], "Standard");
+        for mode in ["Standard", "Nis", "Fsr1", "RtxVideo"] {
+            let input = serde_json::json!({"schema_version":1,"upscale":{"mode":mode,"nis_sharpness":2.0,"fsr_sharpness":-1.0}});
+            let settings = Settings::parse(&input.to_string()).unwrap();
+            let saved = serde_json::to_value(&settings).unwrap();
+            assert_eq!(saved["upscale"]["mode"], mode);
+            assert_eq!(saved["upscale"]["nis_sharpness"], 1.0);
+            assert_eq!(saved["upscale"]["fsr_sharpness"], 0.0);
+            assert_eq!(Settings::parse(&saved.to_string()).unwrap(), settings);
+        }
     }
 }

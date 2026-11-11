@@ -218,9 +218,32 @@ impl ConsoleApp {
                             self.color_original,
                             true,
                         );
-                        self.presented_frame = Some(frame.clone());
-                        self.presented_color = effective;
-                        color_gpu::paint(ui, rect, frame.clone(), effective, false);
+                        let target = upscale_ui::viewport_size(rect, ui.ctx())
+                            .unwrap_or([frame.width, frame.height]);
+                        let mut upscale = upscale_ui::effective_settings(
+                            self.settings.upscale,
+                            self.upscale_comparison,
+                        );
+                        self.upscale_error = upscale_gpu::paint_enhanced(
+                            ui,
+                            rect,
+                            frame.clone(),
+                            effective,
+                            false,
+                            upscale,
+                            target,
+                        )
+                        .err();
+                        if self.upscale_error.is_some() {
+                            upscale.mode = console_link::upscale::UpscaleMode::Standard;
+                            color_gpu::paint(ui, rect, frame.clone(), effective, false);
+                        }
+                        self.presented_image = Some(upscale_ui::PresentedImage {
+                            frame: frame.clone(),
+                            color: effective,
+                            upscale,
+                            target,
+                        });
                     }
                 } else if let Some(texture) = &self.texture {
                     let available = ui.available_size();
@@ -228,8 +251,16 @@ impl ConsoleApp {
                     let size = original * (available.x / original.x).min(available.y / original.y);
                     let rect = egui::Rect::from_center_size(ui.max_rect().center(), size);
                     ui.put(rect, egui::Image::new(texture).fit_to_exact_size(size));
-                    self.presented_frame = self.displayed.clone();
-                    self.presented_color = console_link::color::ColorSettings::default();
+                    self.presented_image =
+                        self.displayed
+                            .as_ref()
+                            .map(|frame| upscale_ui::PresentedImage {
+                                frame: frame.clone(),
+                                color: Default::default(),
+                                upscale: Default::default(),
+                                target: upscale_ui::viewport_size(rect, ui.ctx())
+                                    .unwrap_or([frame.width, frame.height]),
+                            });
                 }
             });
         let progress = ctx.animate_bool_with_time(

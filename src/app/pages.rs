@@ -309,14 +309,28 @@ impl ConsoleApp {
     }
 
     pub(super) fn current_game(&mut self) -> Option<Game> {
-        if self.game_metadata_name != self.settings.game {
-            self.game_metadata_name = self.settings.game.clone();
-            self.game_metadata = catalog::find_game(&self.settings.game);
+        if self.game_metadata_name != self.game_name() {
+            self.game_metadata_name = self.game_name().to_owned();
+            self.game_metadata = catalog::find_game(self.game_name());
         }
-        self.game_metadata.clone()
+        let mut game = self.game_metadata.clone();
+        if self.settings.nintendo_enabled && !self.game_name().is_empty() {
+            let entry = game.get_or_insert_with(|| Game {
+                id: String::new(),
+                name: self.game_name().to_owned(),
+                aliases: Vec::new(),
+                cover_url: None,
+                game_url: None,
+            });
+            if let Some(cover) = self.nintendo_cover() {
+                entry.cover_url = Some(cover.to_owned());
+            }
+        }
+        game
     }
 
     pub(super) fn choose_game(&mut self, game: String, ctx: &egui::Context) {
+        self.settings.nintendo_enabled = false;
         self.settings.game = game;
         self.started_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -350,80 +364,84 @@ impl ConsoleApp {
         } else {
             auth_status
         };
-        theme::card().show(ui, |ui| match &auth_status {
-            AuthStatus::Connected(account) => {
-                ui.horizontal(|ui| {
-                    if let Some(avatar) = account
-                        .avatar_url
-                        .as_deref()
-                        .and_then(|url| self.artwork.image(&ctx, url))
-                    {
-                        ui.add(
-                            egui::Image::new(&avatar)
-                                .fit_to_exact_size(egui::vec2(60.0, 60.0))
-                                .corner_radius(30),
-                        );
-                    } else {
-                        theme::icon(ui, Icon::Discord, 48.0, theme::TEXT);
-                    }
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(&account.display_name).size(22.0).strong());
-                        theme::subtitle(ui, "Аккаунт Discord подключен");
+        theme::card().show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            match &auth_status {
+                AuthStatus::Connected(account) => {
+                    ui.horizontal(|ui| {
+                        if let Some(avatar) = account
+                            .avatar_url
+                            .as_deref()
+                            .and_then(|url| self.artwork.image(&ctx, url))
+                        {
+                            ui.add(
+                                egui::Image::new(&avatar)
+                                    .fit_to_exact_size(egui::vec2(60.0, 60.0))
+                                    .corner_radius(30),
+                            );
+                        } else {
+                            theme::icon(ui, Icon::Discord, 48.0, theme::TEXT);
+                        }
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&account.display_name).size(22.0).strong());
+                            theme::subtitle(ui, "Аккаунт Discord подключен");
+                        });
                     });
-                });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Отключить").clicked() {
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Отключить").clicked() {
+                            if let Some(auth) = &self.discord_auth {
+                                auth.disconnect();
+                            }
+                            self.discord.require_account(None);
+                            self.discord.set(None);
+                        }
+                    });
+                }
+                AuthStatus::Connecting => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Подтверди подключение в Discord");
+                    });
+                    theme::subtitle(ui, "После входа приложение откроется автоматически.");
+                    if ui.button("Отменить").clicked() {
                         if let Some(auth) = &self.discord_auth {
                             auth.disconnect();
                         }
                         self.discord.require_account(None);
                         self.discord.set(None);
                     }
-                });
-            }
-            AuthStatus::Connecting => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Подтверди подключение в Discord");
-                });
-                theme::subtitle(ui, "После входа приложение откроется автоматически.");
-                if ui.button("Отменить").clicked() {
-                    if let Some(auth) = &self.discord_auth {
-                        auth.disconnect();
+                }
+                AuthStatus::Disconnected | AuthStatus::Error(_) => {
+                    card_title(
+                        ui,
+                        Icon::Discord,
+                        "Подключи Discord",
+                        "Название игры и обложка в твоем профиле",
+                    );
+                    if let AuthStatus::Error(message) = &auth_status {
+                        ui.colored_label(Color32::from_rgb(232, 157, 149), message);
                     }
-                    self.discord.require_account(None);
-                    self.discord.set(None);
-                }
-            }
-            AuthStatus::Disconnected | AuthStatus::Error(_) => {
-                card_title(
-                    ui,
-                    Icon::Discord,
-                    "Подключи Discord",
-                    "Название игры и обложка в твоем профиле",
-                );
-                if let AuthStatus::Error(message) = &auth_status {
-                    ui.colored_label(Color32::from_rgb(232, 157, 149), message);
-                }
-                if ui
-                    .add_enabled(
-                        self.discord_auth.is_some(),
-                        egui::Button::new("Подключить Discord").min_size(egui::vec2(190.0, 38.0)),
-                    )
-                    .clicked()
-                    && let Some(auth) = &self.discord_auth
-                {
-                    auth.connect();
-                }
-                if matches!(auth_status, AuthStatus::Error(_))
-                    && ui.button("Забыть сохраненный вход").clicked()
-                {
-                    if let Some(auth) = &self.discord_auth {
-                        auth.disconnect();
+                    if ui
+                        .add_enabled(
+                            self.discord_auth.is_some(),
+                            egui::Button::new("Подключить Discord")
+                                .min_size(egui::vec2(190.0, 38.0)),
+                        )
+                        .clicked()
+                        && let Some(auth) = &self.discord_auth
+                    {
+                        auth.connect();
                     }
-                    self.discord.require_account(None);
-                    self.discord.set(None);
+                    if matches!(auth_status, AuthStatus::Error(_))
+                        && ui.button("Забыть сохраненный вход").clicked()
+                    {
+                        if let Some(auth) = &self.discord_auth {
+                            auth.disconnect();
+                        }
+                        self.discord.require_account(None);
+                        self.discord.set(None);
+                    }
                 }
             }
         });
@@ -449,26 +467,30 @@ impl ConsoleApp {
                 }
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new(if self.settings.game.is_empty() {
+                        RichText::new(if self.game_name().is_empty() {
                             "Игра не выбрана"
                         } else {
-                            &self.settings.game
+                            self.game_name()
                         })
                         .size(19.0)
                         .strong(),
                     );
                     theme::subtitle(ui, "Nintendo Switch");
-                    if self.active.is_some() && !self.settings.game.is_empty() {
+                    if (self.active.is_some() || self.settings.nintendo_enabled)
+                        && !self.game_name().is_empty()
+                    {
                         let now = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .map(|time| time.as_secs() as i64)
                             .unwrap_or(0);
-                        let minutes = now.saturating_sub(self.started_unix).max(0) / 60;
+                        let minutes = now.saturating_sub(self.game_started_at()).max(0) / 60;
                         theme::subtitle(ui, &format!("В игре {minutes} мин · Console Link"));
                     }
                 });
             });
-            ui.add_space(12.0);
+            ui.add_space(16.0);
+            self.nintendo_controls(ui);
+            ui.add_space(8.0);
             theme::toggle(
                 ui,
                 &mut self.settings.discord_enabled,
@@ -487,20 +509,18 @@ impl ConsoleApp {
                 "В настольном Discord другой аккаунт."
             } else if !self.settings.discord_enabled {
                 "Показ активности выключен."
-            } else if self.active.is_none() {
+            } else if self.settings.nintendo_enabled && self.game_name().is_empty() {
+                "Ожидаем текущую игру из Nintendo."
+            } else if self.active.is_none() && !self.settings.nintendo_enabled {
                 "Статус появится при подключении консоли."
             } else {
                 "Ожидаем настольный Discord. Название игры можно выбрать ниже."
             };
             theme::subtitle(ui, status);
-        });
-        ui.add_space(16.0);
-        theme::card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new("Название игры").size(17.0).strong());
+            ui.add_space(14.0);
             theme::subtitle(
                 ui,
-                "Выбери игру для статуса Discord вручную или введи свое название.",
+                "Выбери игру вручную или введи свое название. Ручной выбор отключает автоматический статус Nintendo.",
             );
             ui.collapsing(
                 "Выбрать или исправить название",
@@ -532,14 +552,6 @@ impl ConsoleApp {
                     }
                 },
             );
-        });
-        ui.add_space(16.0);
-        theme::card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new("Показать друзьям").size(17.0).strong());
-            theme::subtitle(ui,"Открой звонок, нажми демонстрацию экрана и выбери окно с названием игры. Включи передачу звука. Если Discord не видит игру, добавь Console Link в зарегистрированные игры.");
-
-            theme::subtitle(ui,"Начало показа подтверждается в Discord. Автоматическое включение Go Live недоступно его публичному API.");
         });
     }
 

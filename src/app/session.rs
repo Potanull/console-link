@@ -372,26 +372,28 @@ impl ConsoleApp {
         let linked_account = self.discord_auth.as_ref().and_then(DiscordAuth::account);
         self.discord
             .require_account(linked_account.as_ref().map(|account| account.id.clone()));
-        let presence =
-            if self.active.is_some() && self.settings.discord_enabled && linked_account.is_some() {
-                Some(Presence {
-                    application_id: DEFAULT_APPLICATION_ID.to_owned(),
-                    game: self
-                        .settings
-                        .game
-                        .chars()
-                        .filter(|character| !character.is_control())
-                        .take(128)
-                        .collect(),
-                    started_at: self.started_unix,
-                    cover_url: current_game
-                        .as_ref()
-                        .and_then(|game| game.cover_url.clone()),
-                    game_url: current_game.as_ref().and_then(|game| game.game_url.clone()),
-                })
-            } else {
-                None
-            };
+        let presence = if (self.active.is_some() || self.settings.nintendo_enabled)
+            && !self.game_name().is_empty()
+            && self.settings.discord_enabled
+            && linked_account.is_some()
+        {
+            Some(Presence {
+                application_id: DEFAULT_APPLICATION_ID.to_owned(),
+                game: self
+                    .game_name()
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(128)
+                    .collect(),
+                started_at: self.game_started_at(),
+                cover_url: current_game
+                    .as_ref()
+                    .and_then(|game| game.cover_url.clone()),
+                game_url: current_game.as_ref().and_then(|game| game.game_url.clone()),
+            })
+        } else {
+            None
+        };
         self.discord.set(presence);
     }
 

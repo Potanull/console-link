@@ -78,6 +78,8 @@ jobs:
           rustup default stable
           rustup component add rustfmt clippy
           rustup target add ${{ matrix.target }}
+      - name: Nintendo helper protocol tests
+        run: node --test scripts/nintendo-presence.test.cjs
       - name: Formatting
         run: cargo fmt --check
       - name: Clippy

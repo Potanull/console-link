@@ -31,10 +31,10 @@ Interfaces: UpscaleMode {Standard,Nis,Fsr1,RtxVideo}; UpscaleSettings {mode,nis_
 
 ### Task 2: RTX SDK and native GPU backend
 Files: native RTX module and minimal dependency/native build changes only after verified SDK contract.
-- [ ] Obtain official SDK through public NVIDIA routes, read actual headers/samples/license. If all routes fail record exact blocker; do not fabricate bindings.
-- [ ] Implement capability discovery, native DX12 lifetime/barrier/synchronization using same GPU device, actual VSR evaluation. No CPU roundtrip or frame accumulation.
-- [ ] Verify unsupported/error fallback, actual evaluation output and performance; document redistributable runtime setup. Gate completed only with genuine SDK.
-- [ ] Review task diff and fix substantive findings.
+- [x] Obtain official SDK through public NVIDIA routes, read actual headers/samples/license. If all routes fail record exact blocker; do not fabricate bindings.
+- [x] Implement capability discovery, native DX12 lifetime/barrier/synchronization using same GPU device, actual VSR evaluation. No CPU roundtrip or frame accumulation.
+- [x] Verify unsupported/error fallback, actual evaluation output and performance; document redistributable runtime setup. Gate completed only with genuine SDK.
+- [x] Review task diff and fix substantive findings.
 
 ### Task 3: Settings, UI and export integration
 Files: src/settings/mod.rs, src/app/{mod,presentation,color_page,color_integration,session}.rs and dedicated upscale UI/export module as needed.
@@ -74,3 +74,10 @@ Settings persistence regression was observed failing (missing upscale field) the
 Implementation scheduling adjustment: root prepared disjoint UI/settings wiring while the only implementation worker owned shaders/GPU files. No simultaneous implementation workers or overlapping file edits beyond the agreed module declaration. RTX remains an external dependency gate; user-supplied reference projects independently require the same SDK and do not include it.
 
 Final status: Tasks1/3 spatial implementation and integration complete; Task4 available-mode verification complete (85+32 tests, strict Clippy, release build, UI snapshots, whole-change review clean). Task2 remains blocked on official SDK acquisition; full three-mode feature is not complete. No commit/release created.
+
+
+## Task 2 completed — 2026-11-12
+
+User supplied official RTX_Video_SDK_v1.1.0.zip, resolving the historical download blocker above. Genuine DX12 VSR runs on the same wgpu device/queue. Static-CRT bridge built from official dispatch library; optional runtime and license included by Windows packaging. UI has quality1–4, comparison, persisted settings and explicit fallback. Full suite85library+35app passed; both opt-in RTX hardware tests independently passed, strictClippy clean and release build passed. Actual release overlay960x600 snapshot verified with effectiveRTX status. Read-only native/UI/packaging review found no blockers. See rtx-task2-report.md for hardware measurements and interop details.
+
+Acceptance limitation: an SDK evaluation failure after frame-recipe capture makes that one screenshot fail explicitly; the next frame records Standard fallback. Installer execution has not been tested in this local GNU environment. No commit or release publication performed for this increment.

@@ -16,17 +16,19 @@ impl ConsoleApp {
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
         if self.color_gpu_available {
             let target = upscale_ui::viewport_size(rect, ui.ctx()).unwrap_or([512, 288]);
-            self.upscale_error = upscale_gpu::paint_enhanced(
+            let upscale = self.available_upscale_settings();
+            let paint_error = upscale_gpu::paint_enhanced(
                 ui,
                 rect,
                 self.color_test_pattern.clone(),
                 self.settings.color,
                 self.color_original,
-                upscale_ui::effective_settings(self.settings.upscale, self.upscale_comparison),
+                upscale,
                 target,
             )
             .err();
-            if self.upscale_error.is_some() {
+            if paint_error.is_some() {
+                self.upscale_error = paint_error;
                 color_gpu::paint(
                     ui,
                     rect,
@@ -42,8 +44,7 @@ impl ConsoleApp {
             let mode = if self.upscale_error.is_some() {
                 console_link::upscale::UpscaleMode::Standard
             } else {
-                upscale_ui::effective_settings(self.settings.upscale, self.upscale_comparison)
-                    .effective_mode(source, target)
+                upscale.effective_mode(source, target)
             };
             self.upscale_preview_status = Some(upscale_ui::DisplayStatus {
                 source,

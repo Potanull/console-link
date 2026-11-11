@@ -418,10 +418,10 @@ impl ConsoleApp {
                     true,
                     &directory,
                 )
-            } else if let Some((device, queue)) = gpu {
+            } else if let Some(state) = gpu {
                 upscale_gpu::render_export(
-                    &device,
-                    &queue,
+                    &state.device,
+                    &state.queue,
                     image.frame.clone(),
                     image.color,
                     image.upscale,

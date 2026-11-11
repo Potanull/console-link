@@ -120,7 +120,7 @@ pub struct ConsoleApp {
     upscale_comparison: bool,
     upscale_error: Option<String>,
     upscale_preview_status: Option<upscale_ui::DisplayStatus>,
-    export_gpu: Option<(wgpu::Device, wgpu::Queue)>,
+    export_gpu: Option<eframe::egui_wgpu::RenderState>,
     notice: Option<String>,
     error: Option<String>,
     last_frame: Instant,
@@ -246,10 +246,7 @@ impl ConsoleApp {
             upscale_comparison: false,
             upscale_error: None,
             upscale_preview_status: None,
-            export_gpu: context
-                .wgpu_render_state
-                .as_ref()
-                .map(|s| (s.device.clone(), s.queue.clone())),
+            export_gpu: context.wgpu_render_state.as_ref().cloned(),
             notice: warning,
             error: None,
             last_frame: Instant::now(),

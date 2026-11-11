@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SmokeTest
+    [switch]$SmokeTest,
+    [string]$RtxSdkDirectory = $env:RTX_VIDEO_SDK_DIR
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +35,15 @@ try {
         Copy-Item $name (Join-Path $portable $name) -Force
     }
 
+    $rtxFiles = @('console_link_ngx.dll', 'nvngx_vsr.dll', 'NVIDIA_RTX_Video_SDK_License.pdf')
+    foreach ($name in $rtxFiles) {
+        $stale = Join-Path $portable $name
+        if (Test-Path -LiteralPath $stale -PathType Leaf) { Remove-Item -LiteralPath $stale }
+    }
+    if ($RtxSdkDirectory) {
+        & (Join-Path $PSScriptRoot 'build-rtx-bridge.ps1') -SdkDirectory $RtxSdkDirectory -OutputDirectory $portable
+    }
+
     $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
     $dumpbinPath = if ($dumpbin) { $dumpbin.Source } else { $null }
     if (-not $dumpbinPath) {
@@ -49,7 +59,9 @@ try {
         throw 'Release executable still imports a separately installed Visual C++ runtime DLL.'
     }
     $archive = Join-Path $output "console-link-$version-windows-x64.zip"
-    Compress-Archive -Path (Join-Path $portable 'console-link.exe'), (Join-Path $portable 'LICENSE'), (Join-Path $portable 'README.md'), (Join-Path $portable 'THIRD_PARTY.md'), (Join-Path $portable 'THIRD_PARTY_LICENSES.txt') -DestinationPath $archive -Force
+    $packageFiles = @('console-link.exe', 'LICENSE', 'README.md', 'THIRD_PARTY.md', 'THIRD_PARTY_LICENSES.txt')
+    if ($RtxSdkDirectory) { $packageFiles += $rtxFiles }
+    Compress-Archive -Path @($packageFiles | ForEach-Object { Join-Path $portable $_ }) -DestinationPath $archive -Force
 
     $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
     $compilerPath = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe' }

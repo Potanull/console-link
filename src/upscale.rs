@@ -15,6 +15,7 @@ pub struct UpscaleSettings {
     pub mode: UpscaleMode,
     pub nis_sharpness: f32,
     pub fsr_sharpness: f32,
+    pub rtx_quality: u32,
 }
 impl Default for UpscaleSettings {
     fn default() -> Self {
@@ -22,11 +23,13 @@ impl Default for UpscaleSettings {
             mode: UpscaleMode::Standard,
             nis_sharpness: 0.3,
             fsr_sharpness: 0.3,
+            rtx_quality: 2,
         }
     }
 }
 impl UpscaleSettings {
     pub fn normalize(&mut self) {
+        self.rtx_quality = self.rtx_quality.clamp(1, 4);
         for value in [&mut self.nis_sharpness, &mut self.fsr_sharpness] {
             *value = if value.is_finite() {
                 value.clamp(0.0, 1.0)
@@ -55,7 +58,9 @@ mod tests {
         value.mode = UpscaleMode::Nis;
         value.nis_sharpness = f32::NAN;
         value.fsr_sharpness = 9.0;
+        value.rtx_quality = 99;
         value.normalize();
+        assert_eq!(value.rtx_quality, 4);
         assert_eq!(value.nis_sharpness, 0.3);
         assert_eq!(value.fsr_sharpness, 1.0);
         for target in [[1920, 1080], [1280, 720], [2560, 1080], [1920, 1440]] {

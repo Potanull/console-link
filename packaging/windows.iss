@@ -54,6 +54,12 @@ Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD_PARTY_LICENSES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
+#if FileExists(SourceDir + "\console_link_ngx.dll")
+Source: "{#SourceDir}\console_link_ngx.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\nvngx_vsr.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\NVIDIA_RTX_Video_SDK_License.pdf"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\console-link"; ValueType: string; ValueName: ""; ValueData: "URL:Console Link"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\console-link"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""

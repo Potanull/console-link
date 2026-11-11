@@ -9,15 +9,15 @@ mod windows;
 pub use windows::{enumerate, start};
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn enumerate() -> Result<Vec<crate::types::VideoDevice>, String> {
+pub fn enumerate() -> Result<Vec<crate::capture::VideoDevice>, String> {
     Err("Console Link supports macOS and Windows 11.".into())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn start(
     _: &str,
-    _: &crate::types::VideoMode,
-    _: crate::types::FrameSink,
-) -> Result<Box<dyn crate::types::CaptureSession>, String> {
+    _: &crate::capture::VideoMode,
+    _: crate::capture::FrameSink,
+) -> Result<Box<dyn crate::capture::CaptureSession>, String> {
     Err("Console Link supports macOS and Windows 11.".into())
 }

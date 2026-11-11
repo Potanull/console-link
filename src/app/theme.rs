@@ -13,7 +13,11 @@ pub fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "Inter".into(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/InterVariable.ttf")).into(),
+        egui::FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/fonts/InterVariable.ttf"
+        )))
+        .into(),
     );
     fonts
         .families
@@ -91,6 +95,7 @@ pub fn section_heading(ui: &mut egui::Ui, title: &str, description: &str) {
 pub enum Icon {
     Session,
     Audio,
+    Color,
     Discord,
     Settings,
     Refresh,
@@ -132,6 +137,22 @@ pub fn draw_icon(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: C
             ]);
             line(&[(0.69, 0.32), (0.79, 0.43), (0.79, 0.57), (0.69, 0.68)]);
             line(&[(0.83, 0.19), (0.95, 0.36), (0.95, 0.64), (0.83, 0.81)]);
+        }
+        Icon::Color => {
+            painter.rect_stroke(
+                egui::Rect::from_min_max(point(0.08, 0.12), point(0.92, 0.88)),
+                3,
+                stroke,
+                StrokeKind::Inside,
+            );
+            line(&[
+                (0.10, 0.76),
+                (0.37, 0.45),
+                (0.58, 0.66),
+                (0.70, 0.50),
+                (0.91, 0.76),
+            ]);
+            painter.circle_stroke(point(0.69, 0.31), rect.width() * 0.08, stroke);
         }
         Icon::Discord => {
             line(&[

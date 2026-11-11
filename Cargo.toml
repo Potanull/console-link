@@ -1,6 +1,6 @@
 [package]
 name = "console-link"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 description = "A focused desktop companion for HDMI capture cards"
@@ -20,9 +20,6 @@ webbrowser = "1"
 url = "2"
 raw-window-handle = "0.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-ocrs = { version = "0.14", default-features = false, features = ["onnx"] }
-rten = { version = "0.28", default-features = false, features = ["onnx_format"] }
-sha2 = "0.10"
 unicode-normalization = "0.1"
 # Cargo.lock resolves gpu-allocator against windows 0.58 to match wgpu-hal.
 wgpu = { version = "27", default-features = false, features = ["metal", "dx12", "wgsl", "std"] }
@@ -52,3 +49,6 @@ strip = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { version = "0.1", default-features = false }
+
+[profile.dev.package.console-link]
+opt-level = 2

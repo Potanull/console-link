@@ -1,3 +1,4 @@
+use crate::config::capture::{RETRY_INITIAL_SECS, RETRY_MAX_SECS};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ pub struct RetryPolicy {
 
 impl RetryPolicy {
     pub fn arm(&mut self, now: Instant) {
-        self.next = Some(now + Duration::from_secs(2));
+        self.next = Some(now + Duration::from_secs(RETRY_INITIAL_SECS));
         self.attempts = 0;
     }
     pub fn cancel(&mut self) {
@@ -36,7 +37,9 @@ impl RetryPolicy {
     }
     pub fn failed(&mut self, now: Instant) {
         self.attempts = (self.attempts + 1).min(4);
-        self.next = Some(now + Duration::from_secs((2_u64 << self.attempts).min(30)));
+        self.next = Some(
+            now + Duration::from_secs((RETRY_INITIAL_SECS << self.attempts).min(RETRY_MAX_SECS)),
+        );
     }
 }
 

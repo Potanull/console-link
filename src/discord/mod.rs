@@ -1,6 +1,14 @@
+use crate::config::discord as config;
+
+pub mod auth;
+mod transport;
+
+use transport::{Transport, decode_header};
+
 use crossbeam_channel::{Receiver, Sender, bounded};
 use discord_rich_presence::{DiscordIpc, activity, error::Error};
 use serde_json::{Value, json};
+#[cfg(all(test, unix))]
 use std::io::{Read, Write};
 use std::sync::{
     Arc, Mutex,
@@ -8,7 +16,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-const MAX_PACKET: usize = 64 * 1024;
+fn valid_id(id: &str) -> bool {
+    (16..=22).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Presence {
@@ -21,8 +31,7 @@ pub struct Presence {
 
 impl Presence {
     pub fn valid(&self) -> bool {
-        (16..=22).contains(&self.application_id.len())
-            && self.application_id.bytes().all(|b| b.is_ascii_digit())
+        valid_id(&self.application_id)
             && !self.game.trim().is_empty()
             && self.game.chars().count() <= 128
             && !self.game.chars().any(char::is_control)
@@ -50,9 +59,7 @@ fn game_activity(presence: &Presence) -> activity::Activity<'_> {
         .status_display_type(activity::StatusDisplayType::Details)
         .timestamps(activity::Timestamps::new().start(presence.started_at));
     let mut assets = activity::Assets::new()
-        .small_image(
-            "https://raw.githubusercontent.com/Potanull/console-link/main/assets/window-icon.png",
-        )
+        .small_image(config::ICON_URL)
         .small_text("Console Link");
     if let Some(cover) = presence.cover_url.as_deref() {
         assets = assets.large_image(cover).large_text(presence.game.as_str());
@@ -210,7 +217,7 @@ fn run(
             };
         } else if let Some(presence) = wanted
             .as_ref()
-            .filter(|_| wanted != sent || last_try.elapsed() >= Duration::from_secs(15))
+            .filter(|_| wanted != sent || last_try.elapsed() >= config::PUBLISH_INTERVAL)
         {
             if client
                 .as_ref()
@@ -222,7 +229,7 @@ fn run(
                 }
                 sent = None;
             }
-            if last_try.elapsed() >= Duration::from_secs(5) {
+            if last_try.elapsed() >= config::RECONNECT_INTERVAL {
                 last_try = Instant::now();
                 let mut account_mismatch = false;
                 let result = (|| -> Result<NameConfirmation, Error> {
@@ -301,7 +308,7 @@ impl Client {
         let activity =
             serde_json::to_value(game_activity(presence)).map_err(|_| Error::JsonParseResponse)?;
         self.send(json!({ "cmd": "SET_ACTIVITY", "args": { "pid": std::process::id(), "activity": activity }, "nonce": nonce }), 1)?;
-        let deadline = Instant::now() + Duration::from_millis(500);
+        let deadline = Instant::now() + config::IO_TIMEOUT;
         // Heartbeats may precede the command reply. A finite count/deadline prevents
         // an unrelated event or a stream of PINGs from being mistaken for acceptance.
         for _ in 0..4 {
@@ -376,144 +383,8 @@ impl DiscordIpc for Client {
         self.user_id = response
             .pointer("/data/user/id")
             .and_then(Value::as_str)
-            .filter(|value| {
-                (16..=22).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
-            })
+            .filter(|value| valid_id(value))
             .map(str::to_owned);
-        Ok(())
-    }
-}
-
-fn decode_header(header: [u8; 8]) -> std::io::Result<(u32, usize)> {
-    let opcode = u32::from_le_bytes(header[..4].try_into().expect("four bytes"));
-    let length = u32::from_le_bytes(header[4..].try_into().expect("four bytes")) as usize;
-    if length > MAX_PACKET {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Discord packet exceeds limit",
-        ));
-    }
-    Ok((opcode, length))
-}
-
-#[cfg(unix)]
-struct Transport(std::os::unix::net::UnixStream);
-
-#[cfg(unix)]
-impl Transport {
-    fn connect() -> std::io::Result<Self> {
-        let mut directories = vec![std::path::PathBuf::from("/tmp")];
-        for key in ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"] {
-            if let Some(value) = std::env::var_os(key) {
-                directories.push(value.into());
-            }
-        }
-        for directory in directories {
-            for n in 0..10 {
-                if let Ok(stream) = std::os::unix::net::UnixStream::connect(
-                    directory.join(format!("discord-ipc-{n}")),
-                ) {
-                    stream.set_read_timeout(Some(Duration::from_millis(500)))?;
-                    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
-                    return Ok(Self(stream));
-                }
-            }
-        }
-        Err(std::io::ErrorKind::NotFound.into())
-    }
-    fn read_exact(&mut self, bytes: &mut [u8]) -> std::io::Result<()> {
-        self.0.read_exact(bytes)
-    }
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        self.0.write_all(bytes)
-    }
-}
-
-#[cfg(windows)]
-struct Transport(std::fs::File);
-
-#[cfg(windows)]
-impl Transport {
-    fn connect() -> std::io::Result<Self> {
-        use std::os::windows::fs::OpenOptionsExt;
-        for n in 0..10 {
-            if let Ok(file) = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .custom_flags(0x0010_0000 | 0x0001_0000)
-                .open(format!(r"\\.\pipe\discord-ipc-{n}"))
-            {
-                use std::os::windows::io::AsRawHandle;
-                use windows::Win32::{
-                    Foundation::HANDLE,
-                    System::Pipes::{PIPE_NOWAIT, SetNamedPipeHandleState},
-                };
-                // SAFETY: this process owns the client pipe. Non-wait mode bounds both reads and writes.
-                unsafe {
-                    SetNamedPipeHandleState(
-                        HANDLE(file.as_raw_handle()),
-                        Some(&PIPE_NOWAIT),
-                        None,
-                        None,
-                    )
-                }
-                .map_err(std::io::Error::other)?;
-                return Ok(Self(file));
-            }
-        }
-        Err(std::io::ErrorKind::NotFound.into())
-    }
-    fn read_exact(&mut self, mut bytes: &mut [u8]) -> std::io::Result<()> {
-        use std::os::windows::io::AsRawHandle;
-        use windows::Win32::{Foundation::HANDLE, System::Pipes::PeekNamedPipe};
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while !bytes.is_empty() {
-            let mut available = 0;
-            // SAFETY: file owns a live pipe handle; only the output count is requested.
-            unsafe {
-                PeekNamedPipe(
-                    HANDLE(self.0.as_raw_handle()),
-                    None,
-                    0,
-                    None,
-                    Some(&mut available),
-                    None,
-                )
-            }
-            .map_err(std::io::Error::other)?;
-            if available == 0 {
-                if Instant::now() >= deadline {
-                    return Err(std::io::ErrorKind::TimedOut.into());
-                }
-                std::thread::sleep(Duration::from_millis(5));
-                continue;
-            }
-            let amount = bytes.len().min(available as usize);
-            self.0.read_exact(&mut bytes[..amount])?;
-            bytes = &mut bytes[amount..];
-        }
-        Ok(())
-    }
-    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        let deadline = Instant::now() + Duration::from_millis(500);
-        let mut remaining = bytes;
-        while !remaining.is_empty() {
-            match self.0.write(remaining) {
-                Ok(0) => {}
-                Ok(written) => {
-                    remaining = &remaining[written..];
-                    continue;
-                }
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
-                        || error.raw_os_error() == Some(232) => {}
-                Err(error) => return Err(error),
-            }
-            if Instant::now() >= deadline {
-                return Err(std::io::ErrorKind::TimedOut.into());
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
         Ok(())
     }
 }
@@ -550,14 +421,9 @@ mod tests {
             "ping_flood",
         ] {
             let (socket, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_millis(500)))
-                .unwrap();
-            socket
-                .set_write_timeout(Some(Duration::from_millis(500)))
-                .unwrap();
-            peer.set_read_timeout(Some(Duration::from_millis(500)))
-                .unwrap();
+            socket.set_read_timeout(Some(config::IO_TIMEOUT)).unwrap();
+            socket.set_write_timeout(Some(config::IO_TIMEOUT)).unwrap();
+            peer.set_read_timeout(Some(config::IO_TIMEOUT)).unwrap();
             let server = std::thread::spawn(move || {
                 let (op, request) = receive(&mut peer);
                 assert_eq!(op, 1);
@@ -734,7 +600,7 @@ mod tests {
         let name = format!(
             r"\\.\pipe\console-link-test-{}-{}",
             std::process::id(),
-            crate::types::monotonic_ns()
+            crate::capture::monotonic_ns()
         );
         let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
         // SAFETY: name is NUL terminated; the test owns and closes the returned handle.

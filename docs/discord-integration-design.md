@@ -4,7 +4,7 @@
 
 Use existing desktop IPC with the shared application ID, explicit linked-account gate and `Playing` activity. The public OAuth login confirms identity and supplies profile/avatar; it does not grant REST activity writes. Scope remains `identify`, PKCE S256 and OS credential store. No bot tokens, user tokens or partner RPC scopes.
 
-Latest Discord documentation supports `activity.name` for the selected game, `status_display_type=2`, art, timestamps and up to two buttons. Use maintained discord-rich-presence serialization, bounded transport and an acknowledged SET_ACTIVITY request. Expose a rejected/overridden name rather than claiming success. The public API does not offer starting Go Live or forcing Discord's stream prompt. Provide a game-named window, a dismissible share prompt and an explicit desktop Discord launch; the user selects a voice call/window and starts sharing there.
+Latest Discord documentation supports `activity.name` for the selected game, `status_display_type=2`, art, timestamps and up to two buttons. Use maintained discord-rich-presence serialization, bounded transport and an acknowledged SET_ACTIVITY request. Expose a rejected/overridden name rather than claiming success. The public API does not offer starting Go Live or forcing Discord's stream prompt. Provide a game-named window; the user selects a voice call/window and starts sharing in Discord. The application has no share popup or desktop Discord launch action.
 
 ## Data flow
 

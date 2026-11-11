@@ -1,13 +1,11 @@
 pub mod audio;
+pub mod capture;
+pub mod catalog;
+pub mod color;
+pub mod config;
 pub mod discord;
-pub mod discord_auth;
-pub mod game_recognition;
-pub mod native;
-pub mod scheduler;
-pub mod session;
+pub mod monitoring;
 pub mod settings;
-pub mod types;
-pub mod video_policy;
 
 #[cfg(test)]
 mod platform_configuration {
@@ -22,8 +20,11 @@ mod platform_configuration {
 
     #[test]
     fn embedded_window_icon_decodes() {
-        let icon =
-            eframe::icon_data::from_png_bytes(include_bytes!("../assets/window-icon.png")).unwrap();
+        let icon = eframe::icon_data::from_png_bytes(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/window-icon.png"
+        )))
+        .unwrap();
         assert_eq!((icon.width, icon.height), (256, 256));
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
     }

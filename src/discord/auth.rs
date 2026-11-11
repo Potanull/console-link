@@ -1,6 +1,8 @@
 //! Discord account identity via public-client PKCE. Activity remains desktop IPC.
 //! Tokens never cross this module's public API and are persisted only in the OS credential vault.
 
+use super::valid_id;
+use crate::config::discord as config;
 use crossbeam_channel::{Sender, bounded};
 use oauth2::{
     AuthType, AuthUrl, AuthorizationCode, ClientId, CsrfToken, EndpointNotSet, EndpointSet,
@@ -17,17 +19,6 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use url::Url;
-
-pub const DEFAULT_APPLICATION_ID: &str = "1569416573180051537";
-pub const REDIRECT_URI: &str = "http://127.0.0.1:45961/discord/callback";
-const CALLBACK_ADDRESS: &str = "127.0.0.1:45961";
-const AUTHORIZE_URL: &str = "https://discord.com/oauth2/authorize";
-const TOKEN_URL: &str = "https://discord.com/api/oauth2/token";
-const PROFILE_URL: &str = "https://discord.com/api/v10/users/@me";
-const REVOKE_URL: &str = "https://discord.com/api/oauth2/token/revoke";
-const MAX_HEADER_BYTES: usize = 8192;
-const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
-const LOGIN_TIMEOUT: Duration = Duration::from_secs(180);
 
 type PublicClient =
     BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
@@ -296,9 +287,13 @@ enum Failure {
 fn client(application_id: &str) -> PublicClient {
     BasicClient::new(ClientId::new(application_id.into()))
         .set_auth_type(AuthType::RequestBody)
-        .set_auth_uri(AuthUrl::new(AUTHORIZE_URL.into()).expect("constant authorization URL"))
-        .set_token_uri(TokenUrl::new(TOKEN_URL.into()).expect("constant token URL"))
-        .set_redirect_uri(RedirectUrl::new(REDIRECT_URI.into()).expect("constant loopback URL"))
+        .set_auth_uri(
+            AuthUrl::new(config::AUTHORIZE_URL.into()).expect("constant authorization URL"),
+        )
+        .set_token_uri(TokenUrl::new(config::TOKEN_URL.into()).expect("constant token URL"))
+        .set_redirect_uri(
+            RedirectUrl::new(config::REDIRECT_URI.into()).expect("constant loopback URL"),
+        )
 }
 
 fn login(
@@ -308,7 +303,7 @@ fn login(
     shared: &Shared,
     generation: u64,
 ) -> Result<Session, Failure> {
-    let listener = TcpListener::bind(CALLBACK_ADDRESS).map_err(|_| {
+    let listener = TcpListener::bind(config::CALLBACK_ADDRESS).map_err(|_| {
         Failure::Message(
             "Порт входа Discord занят. Закрой другое окно Console Link и повтори вход.",
         )
@@ -427,7 +422,7 @@ fn session_from_token(
     finish_token(token, expected_id, vault, shared, generation, |token| {
         let response = http
             .inner
-            .get(PROFILE_URL)
+            .get(config::PROFILE_URL)
             .bearer_auth(token.access_token().secret())
             .send()
             .map_err(|_| {
@@ -500,7 +495,7 @@ fn finish_token(
 fn revoke_best_effort(application_id: &str, http: &BoundedHttp, refresh: &RefreshToken) {
     let _ = http
         .inner
-        .post(REVOKE_URL)
+        .post(config::REVOKE_URL)
         .form(&[
             ("client_id", application_id),
             ("token", refresh.secret().as_str()),
@@ -554,8 +549,8 @@ impl BoundedHttp {
         Ok(Self {
             inner: reqwest::blocking::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(Duration::from_secs(4))
-                .timeout(Duration::from_secs(8))
+                .connect_timeout(config::CONNECT_TIMEOUT)
+                .timeout(config::HTTP_TIMEOUT)
                 .user_agent("Console-Link/Discord-OAuth")
                 .build()?,
         })
@@ -585,9 +580,9 @@ impl SyncHttpClient for BoundedHttp {
 fn read_bounded(response: reqwest::blocking::Response) -> std::io::Result<Vec<u8>> {
     let mut body = Vec::new();
     response
-        .take(MAX_RESPONSE_BYTES + 1)
+        .take(config::MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)?;
-    if body.len() > MAX_RESPONSE_BYTES as usize {
+    if body.len() > config::MAX_RESPONSE_BYTES as usize {
         return Err(std::io::Error::other("OAuth response exceeds limit"));
     }
     Ok(body)
@@ -604,7 +599,7 @@ fn wait_callback(
     shared: &Shared,
     generation: u64,
 ) -> Result<AuthorizationCode, Failure> {
-    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    let deadline = Instant::now() + config::LOGIN_TIMEOUT;
     while Instant::now() < deadline {
         if !shared.current(generation) {
             return Err(Failure::Cancelled);
@@ -643,7 +638,9 @@ fn read_header(stream: &mut TcpStream, shared: &Shared, generation: u64) -> Resu
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut header = Vec::new();
     let mut buffer = [0; 512];
-    while header.len() < MAX_HEADER_BYTES && Instant::now() < deadline && shared.current(generation)
+    while header.len() < config::MAX_HEADER_BYTES
+        && Instant::now() < deadline
+        && shared.current(generation)
     {
         match stream.read(&mut buffer) {
             Ok(0) => return Err(()),
@@ -665,7 +662,7 @@ fn read_header(stream: &mut TcpStream, shared: &Shared, generation: u64) -> Resu
 }
 
 fn parse_callback(header: &[u8], expected_state: &str) -> Result<Callback, ()> {
-    if header.len() > MAX_HEADER_BYTES {
+    if header.len() > config::MAX_HEADER_BYTES {
         return Err(());
     }
     let text = std::str::from_utf8(header).map_err(|_| ())?;
@@ -689,7 +686,7 @@ fn parse_callback(header: &[u8], expected_state: &str) -> Result<Callback, ()> {
     for line in lines.take_while(|line| !line.is_empty()) {
         let (name, value) = line.split_once(':').ok_or(())?;
         if name.eq_ignore_ascii_case("host") {
-            if host_seen || value.trim() != CALLBACK_ADDRESS {
+            if host_seen || value.trim() != config::CALLBACK_ADDRESS {
                 return Err(());
             }
             host_seen = true;
@@ -704,7 +701,8 @@ fn parse_callback(header: &[u8], expected_state: &str) -> Result<Callback, ()> {
     if !host_seen {
         return Err(());
     }
-    let url = Url::parse(&format!("http://{CALLBACK_ADDRESS}{target}")).map_err(|_| ())?;
+    let url =
+        Url::parse(&format!("http://{}{target}", config::CALLBACK_ADDRESS)).map_err(|_| ())?;
     if url.path() != "/discord/callback" || url.fragment().is_some() {
         return Err(());
     }
@@ -769,9 +767,6 @@ fn completion_response(success: bool) -> String {
     )
 }
 
-fn valid_id(id: &str) -> bool {
-    (16..=22).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
-}
 fn parse_account(bytes: &[u8]) -> Result<DiscordAccount, ()> {
     #[derive(Deserialize)]
     struct Profile {
@@ -939,7 +934,7 @@ mod tests {
         assert!(pending.account.is_none());
         assert!(pending.refresh_at > Instant::now());
         assert_eq!(vault.clears.get(), 0);
-        let token = client(DEFAULT_APPLICATION_ID)
+        let token = client(config::DEFAULT_APPLICATION_ID)
             .exchange_refresh_token(&pending.refresh)
             .request(&RecoveredProvider)
             .unwrap();
@@ -1024,7 +1019,7 @@ mod tests {
                 session.account.is_none(),
                 "unverified identity must not authorize presence"
             );
-            let next = client(DEFAULT_APPLICATION_ID)
+            let next = client(config::DEFAULT_APPLICATION_ID)
                 .exchange_refresh_token(&session.refresh)
                 .request(&RotationProvider)
                 .unwrap();
@@ -1055,7 +1050,7 @@ mod tests {
             let request = format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1:45961\r\n\r\n");
             assert!(parse_callback(request.as_bytes(), "s").is_err());
         }
-        assert!(parse_callback(&vec![b'x'; MAX_HEADER_BYTES + 1], "s").is_err());
+        assert!(parse_callback(&vec![b'x'; config::MAX_HEADER_BYTES + 1], "s").is_err());
     }
 
     #[test]
@@ -1066,7 +1061,7 @@ mod tests {
 
     #[test]
     fn pkce_url_contains_only_identify_scope_and_never_verifier() {
-        let client = client(DEFAULT_APPLICATION_ID);
+        let client = client(config::DEFAULT_APPLICATION_ID);
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let (url, state) = client
             .authorize_url(CsrfToken::new_random)
@@ -1081,7 +1076,7 @@ mod tests {
         );
         assert_eq!(
             query.get("redirect_uri").map(|v| v.as_ref()),
-            Some(REDIRECT_URI)
+            Some(config::REDIRECT_URI)
         );
         assert_eq!(
             query.get("state").map(|v| v.as_ref()),
@@ -1109,13 +1104,13 @@ mod tests {
                 &self,
                 request: oauth2::HttpRequest,
             ) -> Result<oauth2::HttpResponse, Self::Error> {
-                assert_eq!(request.uri().to_string(), TOKEN_URL);
+                assert_eq!(request.uri().to_string(), config::TOKEN_URL);
                 assert!(!request.headers().contains_key("authorization"));
                 let fields: std::collections::HashMap<_, _> =
                     url::form_urlencoded::parse(request.body()).collect();
                 assert_eq!(
                     fields.get("client_id").map(|s| s.as_ref()),
-                    Some(DEFAULT_APPLICATION_ID)
+                    Some(config::DEFAULT_APPLICATION_ID)
                 );
                 assert_eq!(
                     fields.get("code_verifier").map(|s| s.as_ref()),
@@ -1125,7 +1120,7 @@ mod tests {
                 Ok(oauth2::http::Response::builder().status(200).header("content-type", "application/json").body(br#"{"access_token":"test-access","token_type":"Bearer","expires_in":3600,"refresh_token":"test-refresh"}"#.to_vec()).unwrap())
             }
         }
-        let token = client(DEFAULT_APPLICATION_ID)
+        let token = client(config::DEFAULT_APPLICATION_ID)
             .exchange_code(AuthorizationCode::new("test-code".into()))
             .set_pkce_verifier(oauth2::PkceCodeVerifier::new("test-verifier".into()))
             .request(&FakeProvider)

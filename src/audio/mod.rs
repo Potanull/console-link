@@ -6,8 +6,11 @@
 //! feedback loop compensates small input/output clock drift. This is not source
 //! PTS synchronization and does not measure the capture card's HDMI latency.
 
+pub mod equalizer;
+use crate::config::{audio as config, capture::MAX_SYNC_MS};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
+use equalizer::{Equalizer, PreparedEqualizer};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -24,6 +27,8 @@ pub struct AudioConfig {
     pub gain: f32,
     pub muted: bool,
     pub delay_ms: u32,
+    pub eq_enabled: bool,
+    pub eq_gains: [f32; 10],
 }
 
 pub fn input_devices() -> Result<Vec<AudioDeviceInfo>, String> {
@@ -103,14 +108,21 @@ struct Controls {
     underruns: AtomicU64,
     overruns: AtomicU64,
     error: AtomicU32,
+    output_rate: AtomicU32,
+    eq_tx: crossbeam_channel::Sender<PreparedEqualizer>,
+    eq_rx: crossbeam_channel::Receiver<PreparedEqualizer>,
 }
 
 impl Controls {
     fn new(gain: f32, muted: bool, delay_ms: u32) -> Self {
+        let (eq_tx, eq_rx) = crossbeam_channel::bounded(1);
         Self {
+            output_rate: AtomicU32::new(48000),
+            eq_tx,
+            eq_rx,
             gain: AtomicU32::new(normalized_gain(gain).to_bits()),
             muted: AtomicBool::new(muted),
-            delay_ms: AtomicU32::new(delay_ms.min(500)),
+            delay_ms: AtomicU32::new(delay_ms.min(MAX_SYNC_MS as u32)),
             peak: AtomicU32::new(0.0_f32.to_bits()),
             underruns: AtomicU64::new(0),
             overruns: AtomicU64::new(0),
@@ -203,6 +215,7 @@ struct Renderer {
     buffer_underrun: bool,
     drift: f64,
     last_overruns: u64,
+    equalizer: Equalizer,
 }
 
 impl Renderer {
@@ -226,10 +239,14 @@ impl Renderer {
             buffer_underrun: false,
             drift: 0.0,
             last_overruns: 0,
+            equalizer: Equalizer::new(output_rate),
         }
     }
 
     fn begin_buffer(&mut self, output_frames: usize) {
+        if let Ok(prepared) = self.controls.eq_rx.try_recv() {
+            self.equalizer.apply(prepared);
+        }
         self.buffer_peak = 0.0;
         self.buffer_underrun = false;
         let delay = self.controls.delay_ms.load(Ordering::Relaxed);
@@ -304,11 +321,13 @@ impl Renderer {
         } else {
             f32::from_bits(self.controls.gain.load(Ordering::Relaxed))
         };
-        let mut result = [0.0; 2];
-        for channel in 0..2 {
-            result[channel] =
-                finite_sample(a[channel] + (b[channel] - a[channel]) * self.fraction as f32) * gain;
-            self.buffer_peak = self.buffer_peak.max(result[channel].abs());
+        let interpolated = std::array::from_fn(|channel| {
+            finite_sample(a[channel] + (b[channel] - a[channel]) * self.fraction as f32)
+        });
+        let mut result = self.equalizer.process(interpolated);
+        for sample in &mut result {
+            *sample *= gain;
+            self.buffer_peak = self.buffer_peak.max(sample.abs());
         }
         self.fraction += self.step;
         let consume = self.fraction.floor() as usize;
@@ -367,7 +386,7 @@ impl AudioEngine {
                 }
             })
             .map_err(|error| format!("Cannot start audio owner thread: {error}"))?;
-        match ready_rx.recv_timeout(std::time::Duration::from_secs(15)) {
+        match ready_rx.recv_timeout(config::START_TIMEOUT) {
             Ok(Ok(())) => Ok(Self { stop, _worker: worker, controls }),
             Ok(Err(error)) => Err(error),
             Err(_) => Err("Audio device initialization timed out. Check permissions, device connection, and whether another application is using it.".into()),
@@ -396,6 +415,12 @@ impl AudioEngine {
                 );
             }
         }
+        controls.output_rate.store(output_rate, Ordering::Relaxed);
+        let _ = controls.eq_tx.try_send(Equalizer::prepare(
+            output_rate,
+            config.eq_enabled,
+            config.eq_gains,
+        ));
         let ring = Arc::new(FrameRing::new((input_rate as usize * 3 / 4).max(4096)));
         let input = build_input(&input_device, &input_config, ring.clone(), controls.clone())?;
         let output = build_output(
@@ -414,6 +439,22 @@ impl AudioEngine {
         Ok(NativeStreams { input, output })
     }
 
+    pub fn set_equalizer(&self, enabled: bool, gains: [f32; 10]) {
+        let value = Equalizer::prepare(
+            self.controls.output_rate.load(Ordering::Relaxed),
+            enabled,
+            gains,
+        );
+        if let Err(crossbeam_channel::TrySendError::Full(value)) =
+            self.controls.eq_tx.try_send(value)
+        {
+            let _ = self.controls.eq_rx.try_recv();
+            let _ = self.controls.eq_tx.try_send(value);
+        }
+    }
+    pub fn overruns(&self) -> u64 {
+        self.controls.overruns.load(Ordering::Relaxed)
+    }
     pub fn set_gain(&self, gain: f32) {
         self.controls
             .gain
@@ -428,7 +469,7 @@ impl AudioEngine {
     pub fn set_delay_ms(&self, delay_ms: u32) {
         self.controls
             .delay_ms
-            .store(delay_ms.min(500), Ordering::Relaxed);
+            .store(delay_ms.min(MAX_SYNC_MS as u32), Ordering::Relaxed);
     }
     pub fn peak(&self) -> f32 {
         f32::from_bits(self.controls.peak.load(Ordering::Relaxed))
@@ -840,5 +881,44 @@ mod tests {
         }
         assert!((4410..=4412).contains(&ring.available()));
         assert_eq!(controls.underruns.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[cfg(test)]
+mod equalizer_pipeline_regressions {
+    use super::*;
+    #[test]
+    fn prepared_equalizer_is_applied_by_renderer_before_output_meter() {
+        let ring = Arc::new(FrameRing::new(50000));
+        for n in 0..48001 {
+            let value = (std::f32::consts::TAU * 1000.0 * n as f32 / 48000.0).sin() * 0.1;
+            assert!(ring.push([value, -value]));
+        }
+        let controls = Arc::new(Controls::new(0.5, false, 0));
+        let mut gains = [0.0; 10];
+        gains[5] = -12.0;
+        controls
+            .eq_tx
+            .try_send(Equalizer::prepare(48000, true, gains))
+            .ok()
+            .unwrap();
+        let mut renderer = Renderer::new(48000, 48000, ring, controls.clone());
+        renderer.begin_buffer(48000);
+        let mut power = 0.0;
+        for n in 0..48000 {
+            let frame = renderer.frame();
+            assert!((frame[0] + frame[1]).abs() < 0.000001);
+            if n == 24000 {
+                renderer.buffer_peak = 0.0;
+            }
+            if n >= 24000 {
+                power += f64::from(frame[0]).powi(2);
+            }
+        }
+        renderer.end_buffer();
+        let rms = (power / 24000.0).sqrt();
+        assert!((rms - 0.1 * 0.5 * 10.0_f64.powf(-12.0 / 20.0) / 2.0_f64.sqrt()).abs() < 0.0001);
+        let peak = f32::from_bits(controls.peak.load(Ordering::Relaxed));
+        assert!((peak - 0.1 * 0.5 * 10.0_f32.powf(-12.0 / 20.0)).abs() < 0.0001);
     }
 }

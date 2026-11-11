@@ -1,0 +1,33 @@
+# SDR color correction and HDR-like look
+
+Approved decisions in chat (grilling Q1–Q6): SDR artistic correction with controllable HDR-like look, basic controls, original/processed comparison, global editable/saved user presets, prioritize smoothness and low latency. Corrected screenshots by default plus explicit original export. Factory looks: Neutral, Natural, Vivid, Cinema, HDR effect, Shadow detail. No artificial sharpness or spatial halos.
+
+## Scope and behavior
+- Add an Image page and matching gameplay overlay tab. Controls: enabled, exposure EV[-2,2], contrast[0.5,1.5] default1, saturation[0,2] default1, temperature[-1,1], shadows[-1,1], highlights[-1,1], HDR strength[0,1]. Exposure, temperature, shadows, highlights and HDR strength default0. Neutral disabled by default and exact bypass for neutral values.
+- Original/processed comparison is an explicit transient toggle; it never overwrites settings. Controls/presets update live without restarting capture or adding a frame queue. A clearly labelled test pattern previews settings when disconnected; no game detection.
+- Immutable factory presets; save copy, update/rename, delete user presets, reset controls. Global library in existing atomic settings.json; cap64, trim/control-char sanitation/48-char names and case-insensitive uniqueness, same as EQ. Old schema1 files retain defaults; invalid/nonfinite values normalized at settings and rendering boundaries.
+- Screenshots snapshot the displayed frame and effective grading at click time. Background CPU export uses the same color math as the shader. Default F8 and existing shortcut save processed image; a visible original-frame export remains available. Preserve dimensions, pixel alpha, video-only output and exclusive file creation. Comparison-to-original means default screenshot matches that view. PNG is tagged sRGB; input is treated as SDR sRGB because source metadata is unavailable.
+
+## Rendering and color contract
+Choose a video-only egui_wgpu callback, one source upload per changed frame, persistent texture/pipeline/uniform buffer and a single fragment pass. Do not put a CPU pixel transform in playback. No GPU readback per frame or extra capture buffers; window/image aspect and clipping stay unchanged. Direct shader avoids 3D-LUT regeneration during slider dragging; a CPU screenshot transform is acceptable once per export. True HDR/PQ/HLG/10bit output, lost-detail recovery, LUT import, curves and local tone mapping are excluded.
+
+CPU and WGSL must use this exact pipeline, with color parameters normalized first:
+1. If disabled/original/neutral, return input unchanged.
+2. Decode sRGB using standard piecewise transfer (<=0.04045 /12.92; else ((x+0.055)/1.055)^2.4).
+3. Multiply RGB by2^exposure and white balance [2^(temperature*0.12),1,2^(-temperature*0.12)].
+4. y=dot(rgb,[0.2126,0.7152,0.0722]); sw=(1-clamp(y/0.5,0,1))^2; hw=clamp((y-0.25)/0.75,0,1)^2. Multiply rgb by2^(shadows*2*sw+highlights*1.5*hw).
+5. HDR-like shoulder: rgb=rgb*(1+0.6*hdr)/(1+0.6*hdr*rgb), componentwise; identity at hdr0, finite, no neighboring samples.
+6. Saturation around current linear luminance: rgb=y+(rgb-y)*saturation, clamp negative before encoding.
+7. Encode sRGB (<=0.0031308 times12.92; else1.055*x^(1/2.4)-0.055). Apply gamma-space contrast about0.5; clamp0..1. Preserve alpha.
+Uniform layout: three vec4<f32>: [exposure,contrast,saturation,temperature], [shadows,highlights,hdr,active_as_f32], [target_is_srgb_as_f32,0,0,0]. Source texture is Rgba8Unorm (gamma-encoded source). Fragment output is gamma-encoded for non-sRGB surfaces; explicitly decode final result if surface is sRGB to avoid double encoding.
+
+## Interfaces and ownership
+Library src/color.rs exports ColorSettings (serde/default/PartialEq, fields enabled:bool and exposure/contrast/saturation/temperature/shadows/highlights/hdr:f32); ColorPreset{name:String,settings:ColorSettings}; FACTORY_PRESETS: [(&str,ColorSettings);6]; normalize(&mut self), is_identity(&self)->bool, uniform_values(&self, original:bool,target_is_srgb:bool)->[f32;12], transform_rgb([f32;3],&ColorSettings)->[f32;3], apply_rgba(&mut[u8],&ColorSettings)->Result<(),String>. ColorSettings::default is disabled neutral.
+Settings gains `color: ColorSettings` and `color_presets: Vec<ColorPreset>`.
+GPU-owned files src/app/color_gpu.rs and src/app/color.wgsl: `pub(super) fn install(state:&eframe::egui_wgpu::RenderState)` installs callback resources; `pub(super) fn paint(ui:&egui::Ui,rect:egui::Rect,frame:Arc<VideoFrame>,color:ColorSettings,original:bool)` submits callback. No app-state wiring owned by GPU implementer. Persistent resources avoid reuploading same Arc frame; params changed upload uniforms only. Create/init GPU resources during install outside realtime callback; texture only reallocates on source dimension change. Use one callback per UI frame; main gameplay and disconnected preview are mutually exclusive.
+UI-owned file src/app/color_page.rs: `ConsoleApp::color_page(&mut self,ui:&mut egui::Ui)` uses `self.settings.color/color_presets`, `self.color_selected:Option<usize>`, `self.color_name:String`, `self.color_original:bool`, `self.playback.playing`, `self.dirty`, `self.color_preview(ui)` supplied by root, `self.screenshot_with_color(ui.ctx().clone(),original:bool)` supplied by root, `self.displayed` for enablement, `self.color_gpu_available:bool`. Skip preview in gameplay overlay (background already graded). No edits to other files by UI implementer.
+
+## Validation
+Test identity/bypass, parameter sanitation/clamps, alpha/dimensions, desaturation neutral gray, exposure direction, all presets bounded, persistence/legacy settings and GPU–CPU pixel agreement on gradients/color swatches (<=2 byte values). Validate shader with actual wgpu device/pipeline, run full tests and release build. Inspect main/color overlay at narrow/default sizes. Measure upload/processing path with synthetic1080p frames; component or synthetic timings must not be represented as full HDMI latency. Physical capture and macOS acceptance require separate hardware checks.
+
+Builder-check clarifications: recompute saturation luminance after tonal gain and shoulder. Snapshot the exact frame/effective settings pair submitted for painting, including original toggle and GPU-unavailable fallback. Use clamp-to-edge linear source sampling; compare CPU/GPU at native pixel centers. Owning last-frame Arc prevents allocator-address reuse bugs. Bypass still applies output-surface sRGB conversion. Factory numeric values are restrained centrally defined ColorSettings constants in color.rs. These are implementation choices within approved scope; no user-level blocker found.

@@ -1,12 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use console_link::config::app as config;
+
 mod app;
-mod app_return;
-mod artwork;
-mod playback;
-mod shortcuts;
-mod theme;
-mod window_geometry;
+mod platform;
 
 fn main() -> eframe::Result {
     // A protocol invocation only returns focus to an existing login. It never
@@ -14,11 +11,11 @@ fn main() -> eframe::Result {
     if std::env::args()
         .any(|arg| arg == "--return-from-discord" || arg == "console-link://auth/complete")
     {
-        app_return::activate_existing();
+        platform::app_return::activate_existing();
         return Ok(());
     }
     if std::env::args().any(|a| a == "--list-devices") {
-        match console_link::native::enumerate() {
+        match console_link::capture::enumerate() {
             Ok(devices) => {
                 for device in devices {
                     println!("{}", device.name);
@@ -47,33 +44,43 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Console Link")
-            .with_icon(
-                eframe::icon_data::from_png_bytes(include_bytes!("../assets/window-icon.png"))
-                    .expect("embedded application icon is valid PNG"),
-            )
+            .with_title(config::TITLE)
+            .with_icon(window_icon())
             .with_inner_size([
-                dimension_argument("--ui-width", 1040.0, 720.0, 1920.0),
-                dimension_argument("--ui-height", 760.0, 600.0, 1440.0),
+                dimension_argument("--ui-width", 0),
+                dimension_argument("--ui-height", 1),
             ])
-            .with_min_inner_size([720.0, 600.0]),
+            .with_min_inner_size(config::MIN_WINDOW_SIZE),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
     eframe::run_native(
-        "Console Link",
+        config::TITLE,
         options,
         Box::new(|context| Ok(Box::new(app::ConsoleApp::new(context)))),
     )
 }
 
-fn dimension_argument(key: &str, default: f32, min: f32, max: f32) -> f32 {
+fn window_icon() -> eframe::egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/window-icon.png"
+    )))
+    .expect("embedded application icon is valid PNG")
+}
+
+fn argument_value(key: &str) -> Option<String> {
     std::env::args()
         .collect::<Vec<_>>()
         .windows(2)
         .find(|args| args[0] == key)
-        .and_then(|args| args[1].parse::<f32>().ok())
+        .map(|args| args[1].clone())
+}
+
+fn dimension_argument(key: &str, axis: usize) -> f32 {
+    argument_value(key)
+        .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| value.is_finite())
-        .map(|value| value.clamp(min, max))
-        .unwrap_or(default)
+        .map(|value| value.clamp(config::MIN_WINDOW_SIZE[axis], config::MAX_WINDOW_SIZE[axis]))
+        .unwrap_or(config::WINDOW_SIZE[axis])
 }

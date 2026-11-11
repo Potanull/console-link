@@ -1,4 +1,5 @@
-use crate::types::VideoMode;
+use crate::capture::VideoMode;
+use crate::config::capture as config;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -12,7 +13,7 @@ impl Default for CapturePreferences {
     fn default() -> Self {
         Self {
             automatic: true,
-            preferred_fps: 60,
+            preferred_fps: config::MAX_FPS,
         }
     }
 }
@@ -27,7 +28,7 @@ pub fn choose_mode(
             .filter(|mode| valid_mode(mode) && modes.contains(mode))
             .cloned();
     }
-    if !(1..=60).contains(&preferences.preferred_fps) {
+    if !(1..=config::MAX_FPS).contains(&preferences.preferred_fps) {
         return None;
     }
     let target = f64::from(preferences.preferred_fps);
@@ -47,7 +48,9 @@ pub fn choose_mode(
                     distance
                 }
             };
-            let full_hd = |mode: &VideoMode| mode.width == 1920 && mode.height == 1080;
+            let full_hd = |mode: &VideoMode| {
+                mode.width == config::MAX_WIDTH && mode.height == config::MAX_HEIGHT
+            };
             (a_fps > target)
                 .cmp(&(b_fps > target))
                 .then_with(|| full_hd(b).cmp(&full_hd(a)))
@@ -73,12 +76,12 @@ pub fn nominal_fps(mode: &VideoMode) -> u32 {
 
 fn valid_mode(mode: &VideoMode) -> bool {
     mode.width > 0
-        && mode.width <= 1920
+        && mode.width <= config::MAX_WIDTH
         && mode.height > 0
-        && mode.height <= 1080
+        && mode.height <= config::MAX_HEIGHT
         && mode.fps_den > 0
         && mode.fps_num >= mode.fps_den
-        && u64::from(mode.fps_num) <= 60 * u64::from(mode.fps_den)
+        && u64::from(mode.fps_num) <= u64::from(config::MAX_FPS) * u64::from(mode.fps_den)
 }
 
 fn rate(mode: &VideoMode) -> f64 {
@@ -213,7 +216,7 @@ mod tests {
     fn manual_mode_must_be_explicit_valid_and_advertised() {
         let preferences = CapturePreferences {
             automatic: false,
-            preferred_fps: 60,
+            preferred_fps: config::MAX_FPS,
         };
         let selected = mode(1280, 720, 30, 1);
         let modes = [mode(1920, 1080, 60, 1), selected.clone()];

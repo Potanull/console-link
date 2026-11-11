@@ -44,8 +44,6 @@
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | a9040321c371, ae9baa7beea9 |
 | crc32fast | 1.5.4 | MIT OR Apache-2.0 | c6596eb7be85, 61d383b05b87 |
 | crossbeam-channel | 0.5.17 | MIT OR Apache-2.0 | a60eea817514, 5734ed989dfc, b16db96b93b1 |
-| crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 | a60eea817514, 5734ed989dfc |
-| crossbeam-epoch | 0.9.21 | MIT OR Apache-2.0 | a60eea817514, 5734ed989dfc |
 | crossbeam-utils | 0.8.23 | MIT OR Apache-2.0 | a60eea817514, 5734ed989dfc |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | a9040321c371, 3521672491a3 |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | b59affd015e5, c138726a726a, 01e533bd94e8 |
@@ -65,7 +63,6 @@
 | egui-wgpu | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
 | egui-winit | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
 | egui_glow | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| either | 1.19.0 | MIT OR Apache-2.0 | a60eea817514, 7576269ea71f |
 | emath | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
 | epaint | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
 | epaint_default_fonts | 0.33.3 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | 6a73f9541c2d, b9d2c1d909aa |
@@ -145,7 +142,6 @@
 | native-tls | 0.2.18 | MIT OR Apache-2.0 | c6596eb7be85, f2ad7982ddbf |
 | nohash-hasher | 0.2.0 | Apache-2.0 OR MIT | cfc7749b96f6, ec353d4fecf7 |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | a60eea817514, 6485b8ed310d |
-| num_cpus | 1.17.0 | MIT OR Apache-2.0 | a60eea817514, 391a5396cec6 |
 | oauth2 | 5.0.0 | MIT OR Apache-2.0 | a60eea817514, 378f5840b258 |
 | objc | 0.2.7 | MIT | e353f37b12ae |
 | objc-sys | 0.3.5 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
@@ -175,7 +171,6 @@
 | objc2-metal | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-quartz-core | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| ocrs | 0.14.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 96b5371602fb |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | a60eea817514, 23f18e03dc49 |
 | option-ext | 0.2.0 | MPL-2.0 | 66a3107d5ad6 |
 | ordered-float | 5.5.1 | MIT | f7715d38a3fa |
@@ -200,21 +195,8 @@
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | 90eb64f0279b, 6df43f6f4b5d, 209fbbe0ad52 |
 | range-alloc | 0.1.5 | MIT OR Apache-2.0 | a6cba85bc92e, ba00052102ed |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | 0d542e0c8804, 9c5a80639a57, ae895c8576e6 |
-| rayon | 1.12.0 | MIT OR Apache-2.0 | a60eea817514, 0621878e61f0 |
-| rayon-core | 1.13.0 | MIT OR Apache-2.0 | a60eea817514, 0621878e61f0 |
 | renderdoc-sys | 1.1.0 | MIT OR Apache-2.0 | a60eea817514, 24b2f2eff5a7 |
 | reqwest | 0.12.28 | MIT OR Apache-2.0 | 751963a8b88c, 47d4e1803702 |
-| rten | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-base | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-gemm | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-imageproc | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-onnx | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-parallel | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-sequence | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-shape-inference | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-simd | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-tensor | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
-| rten-vecmath | 0.28.0 | MIT OR Apache-2.0 | 62c7a1e35f56, 5096967f408f |
 | rustc-hash | 1.1.0 | Apache-2.0/MIT | a60eea817514, 23f18e03dc49 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | 95bd3988beee, 30fefc3a7d6a |
 | rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 377c2e7c5325, a60eea817514, 268872b9816f, 23f18e03dc49 |
@@ -262,7 +244,6 @@
 | try-lock | 0.2.5 | MIT | c816a0749cdc |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | a60eea817514, f3c9fe731c70 |
 | type-map | 0.5.1 | MIT/Apache-2.0 | 00fb0b04768f, 6e9587a31f8b |
-| typeid | 1.0.3 | MIT OR Apache-2.0 | 62c7a1e35f56, 23f18e03dc49 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | db11fec99467, 516b24e051bf, a825bd853ab7 |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | 62c7a1e35f56, 23f18e03dc49, f7db81051789 |
 | unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | 23860c2a7b5d, a60eea817514, 7b63ecd5f190, f7db81051789 |
@@ -339,11 +320,6 @@ Inter Variable, SIL Open Font License 1.1. Источник: https://github.com/
 Каталог `assets/games.json` содержит 24017 записей, подготовленных из метаданных [TitleDB](https://github.com/blawar/titledb), revision `d424690446eec6f4484209b9a1c067c7f7511398`. Лицензия MIT, Copyright (c) 2019 Blake Warner. Источники и SHA-256 снимков перечислены в `assets/games-sources.json`. Полный текст лицензии включен в THIRD_PARTY_LICENSES.txt.
 
 
-## Модели распознавания
+## Эквалайзер
 
-Ocrs text detection и text recognition, автор Robert Knight. Модели CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/. Подтверждение автора: https://github.com/robertknight/ocrs-models/issues/34. Источники моделей соответствуют официальному CLI: https://github.com/robertknight/ocrs/blob/main/ocrs-cli/src/main.rs. Обучение: https://github.com/robertknight/ocrs-models; HierText (https://github.com/google-research-datasets/hiertext) и синтетические данные. Модели загружаются при первом включении распознавания и не включены в установщик; используются без изменения. Содержимое зафиксировано размером и SHA-256. Полный текст CC BY-SA 4.0 включен в THIRD_PARTY_LICENSES.txt.
-
-| Модель | Размер, байт | SHA-256 | Источник |
-|---|---|---|---|
-| text-detection.onnx | 2499479 | `a917b23dbd9524b465df7e922641b3ff2981623df4ded5a0234004ef2fee7cfe` | https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.onnx |
-| text-recognition.onnx | 9713177 | `86c145c2edb96c8caed5b1ebb8f44d706408922211451c309c625157dd6061c5` | https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.onnx |
+Реализация peaking biquad использует формулы [W3C Audio EQ Cookbook](https://www.w3.org/TR/audio-eq-cookbook/). Модели OCR больше не загружаются и не используются. Исторические тексты лицензий сохранены в THIRD_PARTY_LICENSES.txt.

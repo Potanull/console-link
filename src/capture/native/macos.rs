@@ -24,7 +24,7 @@ use objc2_core_video::{
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString, ns_string};
 
-use crate::types::{CaptureSession, FrameSink, VideoDevice, VideoFrame, VideoMode, monotonic_ns};
+use crate::capture::{CaptureSession, FrameSink, VideoDevice, VideoFrame, VideoMode, monotonic_ns};
 
 struct DelegateState {
     sink: FrameSink,
@@ -79,7 +79,11 @@ fn copy_sample(sample: &CMSampleBuffer, timestamp_ns: u64) -> Option<VideoFrame>
     let stride = CVPixelBufferGetBytesPerRow(&image);
     let row_bytes = width.checked_mul(4)?;
     let byte_count = row_bytes.checked_mul(height)?;
-    if width == 0 || height == 0 || stride < row_bytes || byte_count > 256 * 1024 * 1024 {
+    if width == 0
+        || height == 0
+        || stride < row_bytes
+        || byte_count > crate::config::capture::MAX_FRAME_BYTES
+    {
         return None;
     }
     // SAFETY: The retained image is valid. ReadOnly is paired with the same flag
@@ -119,20 +123,13 @@ fn bgra_to_rgba(source: &[u8], stride: usize, width: usize, height: usize) -> Op
     }
     let needed = (height - 1).checked_mul(stride)?.checked_add(row_bytes)?;
     let size = row_bytes.checked_mul(height)?;
-    if source.len() < needed || size > 256 * 1024 * 1024 {
+    if source.len() < needed || size > crate::config::capture::MAX_FRAME_BYTES {
         return None;
     }
     let mut rgba = vec![0; size];
     for y in 0..height {
         let row = &source[y * stride..y * stride + row_bytes];
-        for (src, dst) in row.as_chunks::<4>().0.iter().zip(
-            rgba[y * row_bytes..(y + 1) * row_bytes]
-                .as_chunks_mut::<4>()
-                .0
-                .iter_mut(),
-        ) {
-            dst.copy_from_slice(&[src[2], src[1], src[0], 255]);
-        }
+        super::super::pixels::copy_bgra_row(row, &mut rgba[y * row_bytes..(y + 1) * row_bytes]);
     }
     Some(rgba)
 }

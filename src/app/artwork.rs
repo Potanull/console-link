@@ -1,3 +1,4 @@
+use console_link::config::artwork as config;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use eframe::egui;
 use std::{collections::HashMap, io::Read};
@@ -12,13 +13,13 @@ pub struct Artwork {
 
 impl Artwork {
     pub fn new() -> Self {
-        let (requests, rx) = bounded::<String>(4);
-        let (tx, results) = bounded(4);
+        let (requests, rx) = bounded::<String>(config::QUEUE_CAPACITY);
+        let (tx, results) = bounded(config::QUEUE_CAPACITY);
         std::thread::spawn(move || {
             let client = oauth2::reqwest::blocking::Client::builder()
                 .redirect(oauth2::reqwest::redirect::Policy::none())
-                .connect_timeout(std::time::Duration::from_secs(3))
-                .timeout(std::time::Duration::from_secs(8))
+                .connect_timeout(config::CONNECT_TIMEOUT)
+                .timeout(config::DOWNLOAD_TIMEOUT)
                 .build();
             while let Ok(url) = rx.recv() {
                 let result = client
@@ -41,10 +42,8 @@ impl Artwork {
     pub fn image(&mut self, ctx: &egui::Context, url: &str) -> Option<egui::TextureHandle> {
         while let Ok((url, image)) = self.results.try_recv() {
             if image.is_none() {
-                self.retry_at.insert(
-                    url.clone(),
-                    std::time::Instant::now() + std::time::Duration::from_secs(30),
-                );
+                self.retry_at
+                    .insert(url.clone(), std::time::Instant::now() + config::RETRY_DELAY);
             } else {
                 self.retry_at.remove(&url);
             }
@@ -63,7 +62,7 @@ impl Artwork {
         }
         if !self.textures.contains_key(url) && allowed_url(url) {
             // Bound GPU memory and queued work when browsing a large game catalog.
-            if self.textures.len() >= 24 {
+            if self.textures.len() >= config::TEXTURE_CACHE_CAPACITY {
                 self.textures.clear();
                 self.retry_at.clear();
             }
@@ -99,24 +98,31 @@ fn download(client: &oauth2::reqwest::blocking::Client, url: &str) -> Option<egu
     let response = client.get(url).send().ok()?.error_for_status().ok()?;
     if response
         .content_length()
-        .is_some_and(|size| size > 2_000_000)
+        .is_some_and(|size| size > config::MAX_DOWNLOAD_BYTES)
     {
         return None;
     }
     let mut bytes = Vec::new();
-    response.take(2_000_001).read_to_end(&mut bytes).ok()?;
-    if bytes.len() > 2_000_000 {
+    response
+        .take(config::MAX_DOWNLOAD_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > config::MAX_DOWNLOAD_BYTES {
         return None;
     }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(2048);
-    limits.max_image_height = Some(2048);
-    limits.max_alloc = Some(32 * 1024 * 1024);
+    limits.max_image_width = Some(config::MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(config::MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(config::MAX_IMAGE_ALLOCATION);
     reader.limits(limits);
-    let image = reader.decode().ok()?.thumbnail(512, 512).to_rgba8();
+    let image = reader
+        .decode()
+        .ok()?
+        .thumbnail(config::THUMBNAIL_SIZE, config::THUMBNAIL_SIZE)
+        .to_rgba8();
     Some(egui::ColorImage::from_rgba_unmultiplied(
         [image.width() as usize, image.height() as usize],
         &image,
@@ -128,8 +134,8 @@ mod tests {
     use super::*;
     #[test]
     fn failed_artwork_retries_after_backoff() {
-        let (requests, rx) = bounded(4);
-        let (tx, results) = bounded(4);
+        let (requests, rx) = bounded(config::QUEUE_CAPACITY);
+        let (tx, results) = bounded(config::QUEUE_CAPACITY);
         let mut artwork = Artwork {
             requests,
             results,

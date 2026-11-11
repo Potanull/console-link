@@ -1,4 +1,6 @@
-use crate::{types::VideoMode, video_policy::CapturePreferences};
+use crate::capture::{CapturePreferences, VideoMode};
+use crate::color::{ColorPreset, ColorSettings};
+use crate::config::{audio, capture};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -19,7 +21,20 @@ pub enum GameWindowMode {
     Fullscreen,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EqualizerSettings {
+    pub enabled: bool,
+    pub gains: [f32; 10],
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EqualizerPreset {
+    pub name: String,
+    pub gains: [f32; 10],
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub schema_version: u32,
@@ -32,10 +47,11 @@ pub struct Settings {
     pub gain: f32,
     pub muted: bool,
     pub sync_ms: i32,
+    pub color: ColorSettings,
+    pub color_presets: Vec<ColorPreset>,
+    pub equalizer: EqualizerSettings,
+    pub equalizer_presets: Vec<EqualizerPreset>,
     pub game: String,
-    pub recognition_enabled: bool,
-    pub show_share_prompt: bool,
-    pub game_manual_override: bool,
     pub discord_enabled: bool,
     pub discord_application_id: String,
     pub screenshot_dir: PathBuf,
@@ -54,13 +70,14 @@ impl Default for Settings {
             game_window_mode: GameWindowMode::default(),
             audio_input_id: String::new(),
             audio_output_id: String::new(),
-            gain: 0.75,
+            gain: audio::DEFAULT_GAIN,
             muted: false,
             sync_ms: 0,
+            color: ColorSettings::default(),
+            color_presets: Vec::new(),
+            equalizer: EqualizerSettings::default(),
+            equalizer_presets: Vec::new(),
             game: String::new(),
-            recognition_enabled: true,
-            show_share_prompt: true,
-            game_manual_override: false,
             discord_enabled: false,
             discord_application_id: String::new(),
             screenshot_dir,
@@ -88,19 +105,45 @@ impl Settings {
             return Err(SettingsError::Invalid("Non-finite volume".into()));
         }
         settings.gain = settings.gain.clamp(0.0, 1.0);
-        settings.sync_ms = settings.sync_ms.clamp(-500, 500);
-        settings.capture_preferences.preferred_fps =
-            settings.capture_preferences.preferred_fps.clamp(1, 60);
+        settings.sync_ms = settings
+            .sync_ms
+            .clamp(-capture::MAX_SYNC_MS, capture::MAX_SYNC_MS);
+        settings.capture_preferences.preferred_fps = settings
+            .capture_preferences
+            .preferred_fps
+            .clamp(1, capture::MAX_FPS);
         if settings.mode.as_ref().is_some_and(|m| {
             m.width == 0
                 || m.height == 0
-                || m.width > 8192
-                || m.height > 8192
+                || m.width > capture::MAX_DEVICE_DIMENSION
+                || m.height > capture::MAX_DEVICE_DIMENSION
                 || m.fps_num == 0
                 || m.fps_den == 0
         }) {
             return Err(SettingsError::Invalid("Invalid video mode".into()));
         }
+        settings.equalizer.gains = crate::audio::equalizer::clean_gains(settings.equalizer.gains);
+        settings.equalizer_presets.truncate(64);
+        let mut names = std::collections::HashSet::new();
+        settings.equalizer_presets.retain_mut(|preset| {
+            preset.name = preset
+                .name
+                .trim()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(48)
+                .collect();
+            preset.gains = crate::audio::equalizer::clean_gains(preset.gains);
+            !preset.name.is_empty() && names.insert(preset.name.to_lowercase())
+        });
+        settings.color.normalize();
+        settings.color_presets.truncate(64);
+        let mut names = std::collections::HashSet::new();
+        settings.color_presets.retain_mut(|preset| {
+            preset.name = crate::color::preset_name(&preset.name);
+            preset.settings.normalize();
+            !preset.name.is_empty() && names.insert(preset.name.to_lowercase())
+        });
         settings.game = settings.game.chars().take(128).collect();
         Ok(settings)
     }
@@ -190,9 +233,6 @@ mod tests {
             r#"{"schema_version":1,"mode":{"width":1920,"height":1080,"fps_num":30,"fps_den":1}}"#,
         )
         .unwrap();
-        assert!(settings.recognition_enabled);
-        assert!(!settings.game_manual_override);
-        assert!(settings.show_share_prompt);
         assert!(settings.capture_preferences.automatic);
         assert_eq!(settings.capture_preferences.preferred_fps, 60);
         assert_eq!(settings.game_window_mode, GameWindowMode::Windowed);
@@ -251,5 +291,147 @@ mod tests {
         atomic_write(&path, b"second").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"second");
         fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod equalizer_regressions {
+    use super::*;
+    #[test]
+    fn legacy_settings_default_to_bypassed_eq_and_discard_ocr_flags() {
+        let settings = Settings::parse(r#"{"schema_version":1,"recognition_enabled":true,"game_manual_override":false,"game":"Mario Kart 8 Deluxe"}"#).unwrap();
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(value["equalizer"]["enabled"], false);
+        assert!(value.get("recognition_enabled").is_none());
+        assert_eq!(settings.game, "Mario Kart 8 Deluxe");
+    }
+    #[test]
+    fn equalizer_and_user_presets_roundtrip_and_clamp() {
+        let settings = Settings::parse(r#"{"schema_version":1,"equalizer":{"enabled":true,"gains":[99,-99,0,0,0,0,0,0,0,0]},"equalizer_presets":[{"name":"Custom","gains":[1,2,3,4,5,6,7,8,9,10]}]}"#).unwrap();
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(value["equalizer"]["gains"][0], 12.0);
+        assert_eq!(value["equalizer"]["gains"][1], -12.0);
+        let roundtrip = Settings::parse(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(roundtrip).unwrap(), value);
+    }
+}
+
+#[cfg(test)]
+mod preset_storage_regressions {
+    use super::*;
+    #[test]
+    fn edited_presets_survive_atomic_save_reload_and_delete() {
+        let path =
+            std::env::temp_dir().join(format!("console-link-presets-{}.json", std::process::id()));
+        let (store, mut settings, _) = SettingsStore::open_path(path.clone());
+        settings.equalizer.enabled = true;
+        settings.equalizer.gains = [2.0; 10];
+        settings.equalizer_presets = vec![EqualizerPreset {
+            name: "Мой пресет".into(),
+            gains: [2.0; 10],
+        }];
+        store.save(&settings).unwrap();
+        let (store, mut settings, warning) = SettingsStore::open_path(path.clone());
+        assert!(warning.is_none());
+        assert!(settings.equalizer.enabled);
+        assert_eq!(settings.equalizer_presets[0].gains, [2.0; 10]);
+        settings.equalizer_presets[0].name = "Новое имя".into();
+        settings.equalizer_presets[0].gains[5] = -3.0;
+        store.save(&settings).unwrap();
+        let (store, mut settings, _) = SettingsStore::open_path(path.clone());
+        assert_eq!(settings.equalizer_presets[0].name, "Новое имя");
+        assert_eq!(settings.equalizer_presets[0].gains[5], -3.0);
+        settings.equalizer_presets.clear();
+        store.save(&settings).unwrap();
+        let (_, settings, _) = SettingsStore::open_path(path.clone());
+        assert!(settings.equalizer_presets.is_empty());
+        fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod overlay_settings_regressions {
+    use super::*;
+    #[test]
+    fn old_share_flag_is_ignored_and_typed_comparison_tracks_preset_edits() {
+        let settings =
+            Settings::parse(r#"{"schema_version":1,"show_share_prompt":true,"gain":0.4}"#).unwrap();
+        assert_eq!(settings.gain, 0.4);
+        assert!(
+            serde_json::to_value(&settings)
+                .unwrap()
+                .get("show_share_prompt")
+                .is_none()
+        );
+        let mut edited = settings.clone();
+        assert_eq!(edited, settings);
+        edited.equalizer_presets.push(EqualizerPreset {
+            name: "Мой".into(),
+            gains: [1.0; 10],
+        });
+        assert_ne!(edited, settings);
+    }
+}
+
+#[cfg(test)]
+mod color_persistence_regressions {
+    use super::*;
+    #[test]
+    fn legacy_files_keep_original_colors_and_color_presets_roundtrip() {
+        let mut settings =
+            Settings::parse(r#"{"schema_version":1,"gain":0.4,"game":"Saved title"}"#).unwrap();
+        assert!(settings.color.is_identity());
+        assert!(settings.color_presets.is_empty());
+        assert_eq!(settings.game, "Saved title");
+        settings.color = crate::color::FACTORY_PRESETS[4].1;
+        settings.color_presets.push(ColorPreset {
+            name: "Мой цвет".into(),
+            settings: settings.color,
+        });
+        let decoded = Settings::parse(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(settings, decoded);
+    }
+    #[test]
+    fn preset_names_and_parameters_are_sanitized_without_resetting_old_options() {
+        let settings=Settings::parse(r#"{"schema_version":1,"gain":0.4,"color":{"enabled":true,"exposure":99,"hdr":99},"color_presets":[{"name":"  My  ","settings":{"contrast":99}},{"name":"my","settings":{}},{"name":" ","settings":{}}]}"#).unwrap();
+        assert_eq!(settings.gain, 0.4);
+        assert_eq!(settings.color.exposure, 2.0);
+        assert_eq!(settings.color.hdr, 1.0);
+        assert_eq!(settings.color_presets.len(), 1);
+        assert_eq!(settings.color_presets[0].name, "My");
+        assert_eq!(settings.color_presets[0].settings.contrast, 1.5);
+    }
+}
+
+#[cfg(test)]
+mod color_atomic_storage_regressions {
+    use super::*;
+    #[test]
+    fn color_settings_and_edited_presets_survive_save_reload_and_delete() {
+        let path = std::env::temp_dir().join(format!(
+            "console-link-color-presets-{}.json",
+            std::process::id()
+        ));
+        let (store, mut settings, _) = SettingsStore::open_path(path.clone());
+        settings.color = crate::color::FACTORY_PRESETS[4].1;
+        settings.color_presets = vec![ColorPreset {
+            name: "Мой цвет".into(),
+            settings: settings.color,
+        }];
+        store.save(&settings).unwrap();
+        let (store, mut settings, warning) = SettingsStore::open_path(path.clone());
+        assert!(warning.is_none());
+        assert_eq!(settings.color, crate::color::FACTORY_PRESETS[4].1);
+        settings.color_presets[0].name = "Новое имя".into();
+        settings.color_presets[0].settings.exposure = -0.5;
+        store.save(&settings).unwrap();
+        let (store, mut settings, _) = SettingsStore::open_path(path.clone());
+        assert_eq!(settings.color_presets[0].name, "Новое имя");
+        assert_eq!(settings.color_presets[0].settings.exposure, -0.5);
+        settings.color_presets.clear();
+        store.save(&settings).unwrap();
+        let (_, settings, _) = SettingsStore::open_path(path.clone());
+        assert!(settings.color_presets.is_empty());
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -9,6 +9,24 @@ date: 2026-11-09
 
 # Архитектура приложения для консоли
 
+## Текущая структура исходников
+
+`src/lib.rs` экспортирует сервисы, а `src/main.rs` запускает desktop-приложение и обрабатывает аргументы командной строки.
+
+- `app/` — состояние приложения, сеанс захвата, страницы интерфейса, игровой режим, виджеты, тема, клавиши и обложки.
+- `capture/` — типы видео, выбор режима, история кадров, доставка кадров, повторное подключение и нативные backends Windows/macOS. Внешний код использует фасад `console_link::capture`.
+- `audio/` — устройства, ограниченный аудиобуфер и мониторинг CoreAudio/WASAPI; `equalizer.rs` обрабатывает PCM десятью стереофильтрами.
+- `discord/` — Rich Presence, OAuth в `auth.rs` и ограниченный IPC-транспорт в `transport.rs`.
+- `catalog.rs` — каталог и ручной поиск игр для Discord, без анализа кадров.
+- `monitoring.rs` — ограниченная история реальных FPS и уровня аудио.
+- `platform/` — активация существующего окна и геометрия системного окна; используется бинарным приложением.
+- `settings/` — пользовательские настройки, проверка формата и атомарное сохранение.
+- `color.rs` — SDR-преобразования, нормализация параметров, встроенные цветовые пресеты и CPU-экспорт.
+- `app/color_gpu.rs` + `app/color.wgsl` — один GPU-проход видео; `color_page.rs` — регуляторы/пресеты; `color_integration.rs` — предпросмотр, фиксация параметров и PNG.
+- `config.rs` — типизированные константы сборки: размеры окна, бюджеты памяти, таймауты, адреса сервисов и ограничения. Значения сгруппированы по подсистемам; пользовательские настройки хранятся отдельно.
+
+Преобразование строки BGRA используется обоими видеобэкендами. Проверка Discord ID общая для профиля, Presence и IPC handshake. Разбор аргументов и декодирование иконки находятся в одном месте в бинарном приложении. Встроенные ресурсы разрешаются относительно `CARGO_MANIFEST_DIR`.
+
 ## 1. Назначение и требования
 
 Компактное desktop-приложение на Rust превращает компьютер в экран и аудиовыход HDMI-консоли. Первый проверяемый комплект: Nintendo Switch, MacBook Pro M2 Pro и карта из карточки Ozon с артикулом 3250235987. Второй обязательный сценарий: Windows 11. Репозиторий должен быть публичным в аккаунте Potanull; название пока рабочее: `console-link`.
@@ -257,3 +275,12 @@ JSON содержит `schema_version`, идентификаторы видео/
 10. [Discord macOS audio](https://support.discord.com/hc/en-us/articles/1500006741102-macOS-Screen-Share-with-Audio), [Go Live](https://support.discord.com/hc/en-us/articles/360040816151-Go-Live-and-Screen-Share).
 11. [Discord RPC](https://github.com/discord/discord-api-docs/blob/main/developers/topics/rpc.mdx), [Rich Presence](https://github.com/discord/discord-api-docs/blob/main/developers/discord-social-sdk/development-guides/setting-rich-presence.mdx).
 12. [Apple: разрешения screen/system audio recording](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac), [OBS macOS audio capture](https://obsproject.com/kb/macos-desktop-audio-capture-guide).
+
+
+## Текущий тракт цветокоррекции(2026-11-11)
+
+В отличие от исторического проекта выше, текущие нативные backends приводят источник к RGB32/BGRA8, после чего передают RGBA8 и timestamp. Матрица, диапазон и HDR-метаданные до UI отдельно не доходят. Цветокоррекция предполагает SDR sRGB; настоящий HDR не заявляется.
+
+При наличии wgpu `session.rs` сохраняет выбранный Arc<VideoFrame> без преобразования в ColorImage. VideoCallback загружает изменившийся источник в Rgba8Unorm, обновляет изменившиеся48байт параметров и рисует в egui-renderpass. Один callback используется либо для видео, либо для отключённой тестовой шкалы. Pipeline/sampler/uniform живут постоянно, texture/bindgroup меняются только при изменении размеров. Last-frame Arc удерживает владение для безопасного ptr_eq. Поверхность sRGB учитывается отдельным флагом; повторное гамма-кодирование исключено.
+
+ColorSettings и пользовательские ColorPreset хранятся в прежнем schema1 settings.json. Новые поля имеют нейтральные defaults; имена и значения нормализуются. Comparison transient и не сохраняется. Экспорт использует пару уже представленного кадра и эффективных параметров. Принудительный original обходит обработку и в экспортном helper. Рендер не ждёт screenshot worker.

@@ -1,4 +1,5 @@
-use crate::types::VideoFrame;
+use crate::capture::VideoFrame;
+use crate::config::capture::MAX_SYNC_MS;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -84,8 +85,8 @@ impl FrameHistory {
         if frame_bytes == 0 || !fps.is_finite() || fps <= 0.0 {
             return 0;
         }
-        ((self.byte_limit / frame_bytes).saturating_sub(3) as f64 / fps * 1000.0).clamp(0.0, 500.0)
-            as u32
+        ((self.byte_limit / frame_bytes).saturating_sub(3) as f64 / fps * 1000.0)
+            .clamp(0.0, f64::from(MAX_SYNC_MS)) as u32
     }
 
     pub fn clear(&mut self) {
@@ -104,7 +105,7 @@ impl FrameHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::VideoFrame;
+    use crate::capture::VideoFrame;
     use std::sync::Arc;
 
     fn frame(ms: u64) -> Arc<VideoFrame> {

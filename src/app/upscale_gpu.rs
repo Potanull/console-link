@@ -1151,6 +1151,7 @@ mod tests {
             .unwrap();
         eprintln!("EASU reconstruction max difference: {easu_error}/255");
         assert!(easu_error <= 1);
+        let mut reference_failures = Vec::new();
         for (mode, expected) in fixtures {
             for (index, sharpness) in [0.0, 0.3, 1.0].into_iter().enumerate() {
                 let settings = UpscaleSettings {
@@ -1184,10 +1185,25 @@ mod tests {
                 } else {
                     2
                 };
-                assert!(
-                    *max <= tolerance && mean < 0.1,
-                    "{mode:?} sharpness {sharpness}: max {max}, mean {mean}"
-                );
+                if *max > tolerance || mean >= 0.1 {
+                    let worst: Vec<_> = differences
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, difference)| **difference > tolerance)
+                        .take(20)
+                        .map(|(i, difference)| {
+                            (
+                                i / 4 % 29,
+                                i / 4 / 29,
+                                i % 4,
+                                output[i],
+                                expected[index][i],
+                                difference,
+                            )
+                        })
+                        .collect();
+                    reference_failures.push(format!("{mode:?} sharpness {sharpness}: max {max}, mean {mean}; (x,y,channel,actual,expected,delta): {worst:?}"));
+                }
             }
             let color = ColorSettings {
                 enabled: true,
@@ -1234,6 +1250,11 @@ mod tests {
             std::fs::remove_file(path).unwrap();
             std::fs::remove_dir(directory).unwrap();
         }
+        assert!(
+            reference_failures.is_empty(),
+            "{}",
+            reference_failures.join("\n")
+        );
     }
     #[test]
     #[ignore = "Synthetic GPU component throughput benchmark; run explicitly on target hardware"]

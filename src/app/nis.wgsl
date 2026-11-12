@@ -48,8 +48,11 @@ fn GetEdgeMap(p:array<array<f32,6>,6>,i:i32,j:i32)->vec4<f32>{
     e_0_90 = min(g_0_90_max / (g_0_90_max + g_45_135_max), 1.0);
     e_45_135 = 1.0 - e_0_90;
 
-    var c_0_90:bool = (g_0_90_max > (g_0_90_min * (2.0*1127.0/1024.0))) && (g_0_90_max > (64.0/1024.0)) && (g_0_90_max > g_45_135_min);
-    var c_45_135:bool = (g_45_135_max > (g_45_135_min * (2.0*1127.0/1024.0))) && (g_45_135_max > (64.0/1024.0)) && (g_45_135_max > g_0_90_min);
+    // Six FP32 luma terms can reassociate on Metal. Treat roundoff-sized
+    // cross-direction differences as ties, as the strict upstream comparison intends.
+    let edge_roundoff:f32 = 0.000001;
+    var c_0_90:bool = (g_0_90_max > (g_0_90_min * (2.0*1127.0/1024.0))) && (g_0_90_max > (64.0/1024.0)) && (g_0_90_max > g_45_135_min + edge_roundoff);
+    var c_45_135:bool = (g_45_135_max > (g_45_135_min * (2.0*1127.0/1024.0))) && (g_45_135_max > (64.0/1024.0)) && (g_45_135_max > g_0_90_min + edge_roundoff);
     var c_g_0_90:bool = g_0_90_max == g_0;
     var c_g_45_135:bool = g_45_135_max == g_45;
 

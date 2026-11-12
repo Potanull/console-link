@@ -1,7 +1,8 @@
 //! AVFoundation capture. Native objects remain on one owner thread; the serial
 //! delegate queue copies pixels before returning the driver's sample buffer.
 
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -24,10 +25,21 @@ use objc2_core_video::{
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString, ns_string};
 
-use crate::capture::{CaptureSession, FrameSink, VideoDevice, VideoFrame, VideoMode, monotonic_ns};
+use crate::capture::{
+    CaptureSession, CaptureStatistics, FrameSink, VideoDevice, VideoFrame, VideoMode, monotonic_ns,
+};
+
+#[derive(Default)]
+struct CaptureCounters {
+    callback_frames: AtomicU64,
+    delivered_frames: AtomicU64,
+    dropped_frames: AtomicU64,
+    conversion_ns: AtomicU64,
+}
 
 struct DelegateState {
     sink: FrameSink,
+    counters: Arc<CaptureCounters>,
 }
 
 define_class!(
@@ -48,20 +60,41 @@ define_class!(
             _connection: &AVCaptureConnection,
         ) {
             let received_ns = monotonic_ns();
+            let counters = &self.ivars().counters;
+            counters.callback_frames.fetch_add(1, Ordering::Relaxed);
             // A Rust consumer panic must never unwind through an Objective-C
             // framework callback. Pixel storage is owned before invoking it.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if let Some(frame) = copy_sample(sample, received_ns) {
+                let frame = copy_sample(sample, received_ns);
+                counters.conversion_ns.fetch_add(
+                    monotonic_ns().saturating_sub(received_ns),
+                    Ordering::Relaxed,
+                );
+                if let Some(frame) = frame {
+                    counters.delivered_frames.fetch_add(1, Ordering::Relaxed);
                     (self.ivars().sink)(frame);
                 }
             }));
+        }
+
+        #[unsafe(method(captureOutput:didDropSampleBuffer:fromConnection:))]
+        unsafe fn dropped(
+            &self,
+            _output: &AVCaptureOutput,
+            _sample: &CMSampleBuffer,
+            _connection: &AVCaptureConnection,
+        ) {
+            self.ivars()
+                .counters
+                .dropped_frames
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 );
 
 impl FrameDelegate {
-    fn new(sink: FrameSink) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(DelegateState { sink });
+    fn new(sink: FrameSink, counters: Arc<CaptureCounters>) -> Retained<Self> {
+        let this = Self::alloc().set_ivars(DelegateState { sink, counters });
         // SAFETY: NSObject's init has the standard initializer signature.
         unsafe { msg_send![super(this), init] }
     }
@@ -274,6 +307,7 @@ struct NativeSession {
     output: Retained<AVCaptureVideoDataOutput>,
     _delegate: Retained<FrameDelegate>,
     queue: DispatchRetained<DispatchQueue>,
+    negotiated: CaptureStatistics,
 }
 
 impl Drop for NativeSession {
@@ -288,7 +322,40 @@ impl Drop for NativeSession {
     }
 }
 
-fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSession, String> {
+fn configure_device(
+    device: &AVCaptureDevice,
+    format: &AVCaptureDeviceFormat,
+    mode: &VideoMode,
+) -> Result<(), String> {
+    // SAFETY: The caller selects an advertised format and rational frame rate
+    // from this device. Every mutation is protected by its configuration lock.
+    unsafe { device.lockForConfiguration() }.map_err(|e| {
+        format!(
+            "Cannot configure capture device: {}",
+            e.localizedDescription()
+        )
+    })?;
+    unsafe {
+        device.setActiveFormat(format);
+        let duration = CMTime {
+            value: mode.fps_den as i64,
+            timescale: mode.fps_num as i32,
+            flags: objc2_core_media::CMTimeFlags::Valid,
+            epoch: 0,
+        };
+        device.setActiveVideoMinFrameDuration(duration);
+        device.setActiveVideoMaxFrameDuration(duration);
+        device.unlockForConfiguration();
+    }
+    Ok(())
+}
+
+fn open(
+    device_id: &str,
+    mode: &VideoMode,
+    sink: FrameSink,
+    counters: Arc<CaptureCounters>,
+) -> Result<NativeSession, String> {
     let device = devices()
         .into_iter()
         .find(|d| unsafe { d.uniqueID() }.to_string() == device_id)
@@ -322,26 +389,9 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
     }
     // InputPriority is an iOS/Catalyst preset, not a macOS capability gate.
     // Configure the advertised macOS device format and frame durations directly.
-    unsafe { device.lockForConfiguration() }.map_err(|e| {
+    if let Err(error) = configure_device(&device, &selected_format, mode) {
         unsafe { session.commitConfiguration() };
-        format!(
-            "Cannot configure capture device: {}",
-            e.localizedDescription()
-        )
-    })?;
-    // SAFETY: selected_format and the rational duration were enumerated from
-    // this same device; the configuration lock is held for every mutation.
-    unsafe {
-        device.setActiveFormat(&selected_format);
-        let duration = CMTime {
-            value: mode.fps_den as i64,
-            timescale: mode.fps_num as i32,
-            flags: objc2_core_media::CMTimeFlags::Valid,
-            epoch: 0,
-        };
-        device.setActiveVideoMinFrameDuration(duration);
-        device.setActiveVideoMaxFrameDuration(duration);
-        device.unlockForConfiguration();
+        return Err(error);
     }
 
     // SAFETY: CoreVideo's CFString key is toll-free bridged to NSString.
@@ -358,7 +408,7 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
         );
     }
     let settings = NSDictionary::from_slices(&[key], &[&*pixel_format as &AnyObject]);
-    let delegate = FrameDelegate::new(sink);
+    let delegate = FrameDelegate::new(sink, counters);
     let queue = DispatchQueue::new("dev.console-link.capture", DispatchQueueAttr::SERIAL);
     unsafe {
         output.setVideoSettings(Some(&settings));
@@ -370,15 +420,20 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
         session.commitConfiguration();
         session.startRunning();
     }
-    let owned = NativeSession {
+    let mut owned = NativeSession {
         session,
         output,
         _delegate: delegate,
         queue,
+        negotiated: CaptureStatistics::default(),
     };
     if !unsafe { owned.session.isRunning() } {
         return Err("Capture could not start. Check the card, Camera permission, and other apps using the device.".into());
     }
+    // Starting the session graph can replace an advertised 50 FPS mode with
+    // a driver's 20 FPS default. Reapply the selected format once after startup,
+    // without another session commit that could reset it again.
+    configure_device(&device, &selected_format, mode)?;
     // Preset-managed drivers may renegotiate at startRunning. Never report a
     // different input size as the mode the user selected.
     let actual_format = unsafe { device.activeFormat() };
@@ -390,6 +445,13 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
             actual_size.width, actual_size.height, mode.width, mode.height
         ));
     }
+    owned.negotiated = CaptureStatistics {
+        active_min_fps: rate_from_duration(unsafe { device.activeVideoMinFrameDuration() }),
+        active_max_fps: rate_from_duration(unsafe { device.activeVideoMaxFrameDuration() }),
+        width: actual_size.width as u32,
+        height: actual_size.height as u32,
+        ..Default::default()
+    };
     // UVC drivers may expose a frame-duration range after starting. It is
     // not a delivery-rate guarantee: keep receiving frames and measure their
     // actual rate in the UI instead of rejecting a usable video stream.
@@ -399,9 +461,21 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
 struct Capture {
     stop: Option<mpsc::Sender<()>>,
     worker: Option<JoinHandle<()>>,
+    counters: Arc<CaptureCounters>,
+    negotiated: CaptureStatistics,
 }
 
-impl CaptureSession for Capture {}
+impl CaptureSession for Capture {
+    fn statistics(&self) -> Option<CaptureStatistics> {
+        Some(CaptureStatistics {
+            callback_frames: self.counters.callback_frames.load(Ordering::Relaxed),
+            delivered_frames: self.counters.delivered_frames.load(Ordering::Relaxed),
+            dropped_frames: self.counters.dropped_frames.load(Ordering::Relaxed),
+            conversion_ns: self.counters.conversion_ns.load(Ordering::Relaxed),
+            ..self.negotiated
+        })
+    }
+}
 
 impl Drop for Capture {
     fn drop(&mut self) {
@@ -432,12 +506,14 @@ pub fn start(
     let mode = mode.clone();
     let (stop_tx, stop_rx) = mpsc::channel();
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let counters = Arc::new(CaptureCounters::default());
+    let worker_counters = counters.clone();
     let worker = thread::Builder::new()
         .name("capture-macos".into())
         .spawn(move || {
-            autoreleasepool(|_| match open(&device_id, &mode, sink) {
+            autoreleasepool(|_| match open(&device_id, &mode, sink, worker_counters) {
                 Ok(session) => {
-                    if ready_tx.send(Ok(())).is_ok() {
+                    if ready_tx.send(Ok(session.negotiated)).is_ok() {
                         let _ = stop_rx.recv();
                     }
                     drop(session);
@@ -449,9 +525,11 @@ pub fn start(
         })
         .map_err(|e| format!("Cannot start capture worker: {e}"))?;
     match ready_rx.recv_timeout(Duration::from_secs(20)) {
-        Ok(Ok(())) => Ok(Box::new(Capture {
+        Ok(Ok(negotiated)) => Ok(Box::new(Capture {
             stop: Some(stop_tx),
             worker: Some(worker),
+            counters,
+            negotiated,
         })),
         Ok(Err(error)) => {
             let _ = worker.join();

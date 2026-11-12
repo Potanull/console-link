@@ -172,6 +172,7 @@ pub struct ConsoleApp {
     diagnostic_permission_retried: bool,
     diagnostic_first_presented: bool,
     diagnostic_started: Instant,
+    cursor_visibility: crate::platform::cursor::CursorVisibility,
 }
 
 impl ConsoleApp {
@@ -321,6 +322,7 @@ impl ConsoleApp {
             diagnostic_permission_retried: false,
             diagnostic_first_presented: false,
             diagnostic_started: Instant::now(),
+            cursor_visibility: Default::default(),
         };
         if argument_value("--ui-page").as_deref() == Some("volume") && app.snapshot_path.is_some() {
             app.feedback.volume_changed(0.0);
@@ -378,6 +380,11 @@ impl ConsoleApp {
             );
         }
         if app.diagnostic_card.is_some() {
+            app.settings.upscale.mode = match argument_value("--diagnose-upscale-mode").as_deref() {
+                Some("nis") => console_link::upscale::UpscaleMode::Nis,
+                Some("fsr1") => console_link::upscale::UpscaleMode::Fsr1,
+                _ => console_link::upscale::UpscaleMode::Standard,
+            };
             context
                 .egui_ctx
                 .send_viewport_cmd(egui::ViewportCommand::Title(
@@ -525,7 +532,13 @@ fn diagnostic_camera_authorized() -> bool {
 impl eframe::App for ConsoleApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.diagnostic_card.is_some()
-            && self.diagnostic_started.elapsed() > Duration::from_secs(30)
+            && self.diagnostic_started.elapsed()
+                > Duration::from_secs(
+                    argument_value("--diagnose-seconds")
+                        .and_then(|value| value.parse().ok())
+                        .filter(|seconds| (1..=300).contains(seconds))
+                        .unwrap_or(30),
+                )
         {
             if let Some(trace) = &self.connection_diagnostics {
                 trace.record(
@@ -697,20 +710,34 @@ impl eframe::App for ConsoleApp {
         if self.feedback.volume_visible(now) {
             self.volume_feedback(ctx);
         }
-        let (focused, moved) = ctx.input(|input| {
+        let (focused, moved, hovered) = ctx.input(|input| {
             (
             input.focused,
-            input.events.iter().any(|event| matches!(event, egui::Event::PointerMoved(_))
-                || matches!(event, egui::Event::MouseMoved(delta) if *delta != egui::Vec2::ZERO)),
+            input.pointer.delta() != egui::Vec2::ZERO
+                || input.events.iter().any(|event| matches!(event, egui::Event::MouseMoved(delta) if *delta != egui::Vec2::ZERO)),
+            input.pointer.hover_pos().is_some(),
         )
         });
-        if self.feedback.hide_cursor(
+        let hide_cursor = self.feedback.hide_cursor(
             now,
             self.active.is_some() || self.snapshot_game,
             self.playback.overlay_open,
-            focused,
+            focused && hovered,
             moved,
-        ) {
+        );
+        if hide_cursor != self.cursor_visibility.is_hidden()
+            && let Some(trace) = &self.connection_diagnostics
+        {
+            trace.record(
+                "cursor_visibility_request",
+                &format!(
+                    "hidden={hide_cursor} focused={focused} hovered={hovered} moved={moved} overlay={}",
+                    self.playback.overlay_open
+                ),
+            );
+        }
+        self.cursor_visibility.set_hidden(hide_cursor);
+        if hide_cursor {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }
         ctx.request_repaint_after(if self.active.is_some() {

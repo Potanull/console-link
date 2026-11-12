@@ -44,8 +44,26 @@ pub struct VideoFrame {
 
 pub type FrameSink = Arc<dyn Fn(VideoFrame) + Send + Sync>;
 
+/// Numeric capture telemetry only; counters are cumulative for this session.
+/// Delivered frames count successful conversion before the application sink.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CaptureStatistics {
+    pub callback_frames: u64,
+    pub delivered_frames: u64,
+    pub dropped_frames: u64,
+    pub conversion_ns: u64,
+    pub active_min_fps: Option<(u32, u32)>,
+    pub active_max_fps: Option<(u32, u32)>,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Owns an active native capture session; dropping it stops capture.
 pub trait CaptureSession: Send {
+    fn statistics(&self) -> Option<CaptureStatistics> {
+        None
+    }
+
     fn error(&self) -> Option<String> {
         None
     }

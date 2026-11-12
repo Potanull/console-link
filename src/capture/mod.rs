@@ -12,4 +12,6 @@ pub use history::FrameHistory;
 pub use native::{enumerate, start};
 pub use policy::{CapturePreferences, choose_mode, nominal_fps};
 pub use session::{RetryPolicy, send_latest};
-pub use types::{CaptureSession, FrameSink, VideoDevice, VideoFrame, VideoMode, monotonic_ns};
+pub use types::{
+    CaptureSession, CaptureStatistics, FrameSink, VideoDevice, VideoFrame, VideoMode, monotonic_ns,
+};

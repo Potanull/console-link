@@ -7,7 +7,14 @@ impl ConsoleApp {
         }
         self.refreshing = true;
         let tx = self.tx.clone();
+        let diagnostics = self.connection_diagnostics.clone();
+        let video_only_diagnostic = self.diagnostic_card.is_some()
+            && argument_value("--diagnose-audio-input").is_none()
+            && argument_value("--diagnose-audio-output").is_none();
         std::thread::spawn(move || {
+            if let Some(trace) = &diagnostics {
+                trace.record("enumeration_start", "video discovery");
+            }
             let mut devices = Devices {
                 video: vec![],
                 inputs: vec![],
@@ -18,13 +25,27 @@ impl ConsoleApp {
                 Ok(video) => devices.video = video,
                 Err(e) => devices.warnings.push(e),
             }
-            match audio::input_devices() {
-                Ok(inputs) => devices.inputs = inputs,
-                Err(e) => devices.warnings.push(e),
+            if let Some(trace) = &diagnostics {
+                trace.record(
+                    "enumeration_video_ready",
+                    &format!("count={}", devices.video.len()),
+                );
             }
-            match audio::output_devices() {
-                Ok(outputs) => devices.outputs = outputs,
-                Err(e) => devices.warnings.push(e),
+            if !video_only_diagnostic {
+                if let Some(trace) = &diagnostics {
+                    trace.record("enumeration_audio_start", "audio discovery");
+                }
+                match audio::input_devices() {
+                    Ok(inputs) => devices.inputs = inputs,
+                    Err(e) => devices.warnings.push(e),
+                }
+                match audio::output_devices() {
+                    Ok(outputs) => devices.outputs = outputs,
+                    Err(e) => devices.warnings.push(e),
+                }
+            }
+            if let Some(trace) = &diagnostics {
+                trace.record("enumeration_complete", "device discovery complete");
             }
             let _ = tx.send(Event::Devices(Ok(devices)));
             ctx.request_repaint();
@@ -207,6 +228,7 @@ impl ConsoleApp {
     }
 
     pub(super) fn stop(&mut self) {
+        self.cursor_visibility.set_hidden(false);
         self.session_started = None;
         self.monitor.reset();
         self.frame_pacer.reset();
@@ -384,6 +406,23 @@ impl ConsoleApp {
             self.fps = self.received as f64 / self.rate_since.elapsed().as_secs_f64();
             self.received = 0;
             self.rate_since = Instant::now();
+            if let Some(trace) = &self.connection_diagnostics
+                && let Some(stats) = self
+                    .active
+                    .as_ref()
+                    .and_then(|active| active.video.statistics())
+            {
+                trace.record(
+                    "frame_rate",
+                    &format!(
+                        "ui_fps={:.2} callbacks={} delivered={} native_dropped={} queue_dropped={} conversion_ms_total={:.2} active_min_fps={:?} active_max_fps={:?} size={}x{}",
+                        self.fps, stats.callback_frames, stats.delivered_frames,
+                        stats.dropped_frames, self.capture_dropped.load(Ordering::Relaxed),
+                        stats.conversion_ns as f64 / 1_000_000.0,
+                        stats.active_min_fps, stats.active_max_fps, stats.width, stats.height
+                    ),
+                );
+            }
         }
         let now_ns = monotonic_ns();
         if self.active.is_some()

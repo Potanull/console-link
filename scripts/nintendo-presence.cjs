@@ -24,7 +24,7 @@ function main(base) {
   execFile(process.execPath, [entry, '--data-path', path.join(base,'data'), 'nso','friends','--json'], {
     timeout:40000, maxBuffer:2*1024*1024, windowsHide:true,
     env:{...process.env, NXAPI_DEBUG_FILE:'0', DEBUG:'', NXAPI_SKIP_UPDATE_CHECK:'1',
-      NXAPI_USER_AGENT:'ConsoleLink/0.5.0 (Nintendo presence integration)'}
+      NXAPI_USER_AGENT:'ConsoleLink/0.6.0 (Nintendo presence integration)'}
   }, (error,stdout) => {
     let result = {ok:false};
     if (!error) {

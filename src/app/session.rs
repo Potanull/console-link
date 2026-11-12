@@ -54,6 +54,9 @@ impl ConsoleApp {
     }
 
     pub(super) fn connect(&mut self, ctx: egui::Context) {
+        if let Some(trace) = &self.connection_diagnostics {
+            trace.record("connect_requested", "production connection handler entered");
+        }
         self.refresh_capture_mode();
         let Some(device) = self
             .devices
@@ -61,6 +64,9 @@ impl ConsoleApp {
             .iter()
             .find(|d| d.id == self.settings.video_id)
         else {
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record("validation_failed", "selected capture card was not found");
+            }
             self.error = Some("Выбери карту захвата.".into());
             return;
         };
@@ -70,10 +76,22 @@ impl ConsoleApp {
             .clone()
             .filter(|m| device.modes.contains(m))
         else {
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record(
+                    "validation_failed",
+                    "selected capture mode is not advertised",
+                );
+            }
             self.error = Some("Выбери доступный режим карты.".into());
             return;
         };
         if self.settings.audio_input_id.is_empty() != self.settings.audio_output_id.is_empty() {
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record(
+                    "validation_failed",
+                    "audio requires both selected input and output",
+                );
+            }
             self.error = Some("Для звука выбери и вход карты, и аудиовыход. Для видео без звука убери оба выбора.".into());
             return;
         }
@@ -94,12 +112,29 @@ impl ConsoleApp {
         let tx = self.tx.clone();
         let settings = self.settings.clone();
         let dropped = Arc::clone(&self.capture_dropped);
+        let diagnostics = self.connection_diagnostics.clone();
         std::thread::spawn(move || {
+            if let Some(trace) = &diagnostics {
+                trace.record("worker_started", &format!("generation={generation}"));
+            }
             let frame_cancelled = Arc::clone(&cancelled);
             let paint = ctx.clone();
+            let frame_trace = diagnostics.clone();
+            let first_frame_recorded = AtomicBool::new(false);
             let sink: FrameSink = Arc::new(move |frame| {
                 if frame_cancelled.load(Ordering::Acquire) {
                     return;
+                }
+                if let Some(trace) = &frame_trace
+                    && !first_frame_recorded.swap(true, Ordering::Relaxed)
+                {
+                    trace.record(
+                        "first_frame",
+                        &format!(
+                            "generation={generation} width={} height={}",
+                            frame.width, frame.height
+                        ),
+                    );
                 }
                 dropped.fetch_add(
                     send_latest(&frame_tx, &discard_frames, (generation, frame)),
@@ -108,14 +143,37 @@ impl ConsoleApp {
                 paint.request_repaint();
             });
             let result = (|| {
-                let video = capture::start(&settings.video_id, &mode, sink)?;
+                if let Some(trace) = &diagnostics {
+                    trace.record(
+                        "video_start",
+                        &format!(
+                            "generation={generation} width={} height={} fps={}/{}",
+                            mode.width, mode.height, mode.fps_num, mode.fps_den
+                        ),
+                    );
+                }
+                let video =
+                    capture::start(&settings.video_id, &mode, sink).inspect_err(|error| {
+                        if let Some(trace) = &diagnostics {
+                            trace.record("video_error", error);
+                        }
+                    })?;
+                if let Some(trace) = &diagnostics {
+                    trace.record("video_ready", &format!("generation={generation}"));
+                }
                 if cancelled.load(Ordering::Acquire) {
                     return Err("Подключение отменено.".into());
                 }
                 let audio = if settings.audio_input_id.is_empty() {
+                    if let Some(trace) = &diagnostics {
+                        trace.record("audio_skipped", "video-only connection");
+                    }
                     None
                 } else {
-                    Some(AudioEngine::start(&AudioConfig {
+                    if let Some(trace) = &diagnostics {
+                        trace.record("audio_start", &format!("generation={generation}"));
+                    }
+                    let audio = AudioEngine::start(&AudioConfig {
                         input_id: settings.audio_input_id,
                         output_id: settings.audio_output_id,
                         gain: settings.gain,
@@ -123,7 +181,16 @@ impl ConsoleApp {
                         delay_ms: settings.sync_ms.max(0) as u32,
                         eq_enabled: settings.equalizer.enabled,
                         eq_gains: settings.equalizer.gains,
-                    })?)
+                    })
+                    .inspect_err(|error| {
+                        if let Some(trace) = &diagnostics {
+                            trace.record("audio_error", error);
+                        }
+                    })?;
+                    if let Some(trace) = &diagnostics {
+                        trace.record("audio_ready", &format!("generation={generation}"));
+                    }
+                    Some(audio)
                 };
                 if cancelled.load(Ordering::Acquire) {
                     return Err("Подключение отменено.".into());
@@ -222,6 +289,10 @@ impl ConsoleApp {
                 }
                 Event::Started(generation, result) => {
                     if generation != self.generation || self.cancelled.load(Ordering::Acquire) {
+                        if let Some(trace) = &self.connection_diagnostics {
+                            trace
+                                .record("started_event_stale", &format!("generation={generation}"));
+                        }
                         if let Ok(active) = result {
                             std::thread::spawn(move || drop(active));
                         }
@@ -230,6 +301,12 @@ impl ConsoleApp {
                     self.opening = false;
                     match result {
                         Ok(active) => {
+                            if let Some(trace) = &self.connection_diagnostics {
+                                trace.record(
+                                    "started_event_ok",
+                                    &format!("generation={generation}"),
+                                );
+                            }
                             if let Some(audio) = &active.audio {
                                 audio.set_gain(self.settings.gain);
                                 audio.set_equalizer(
@@ -255,6 +332,12 @@ impl ConsoleApp {
                             self.fps = 0.0;
                         }
                         Err(e) => {
+                            if let Some(trace) = &self.connection_diagnostics {
+                                trace.record(
+                                    "started_event_error",
+                                    &format!("generation={generation} error={e}"),
+                                );
+                            }
                             self.cancelled.store(true, Ordering::Release);
                             self.error = Some(e);
                             self.history.clear();
@@ -560,6 +643,12 @@ impl ConsoleApp {
                         )
                         .clicked()
                         {
+                            if let Some(trace) = &self.connection_diagnostics {
+                                trace.record(
+                                    "button_clicked",
+                                    if stop { "stop" } else { "connect" },
+                                );
+                            }
                             if stop {
                                 self.stop();
                             } else {
@@ -594,7 +683,9 @@ impl ConsoleApp {
                                 } else if self.opening {
                                     "Готовим изображение и звук…"
                                 } else {
-                                    if !valid_video {
+                                    if self.error.is_some() {
+                                        "Подключение не удалось"
+                                    } else if !valid_video {
                                         "Выбери карту, чтобы начать"
                                     } else if !valid_audio {
                                         "Выбери аудиовход и выход"
@@ -629,6 +720,11 @@ impl ConsoleApp {
                     ui.spacing_mut().scroll.bar_width = 4.0;
                     ui.spacing_mut().scroll.bar_inner_margin = 8.0;
                 }
+                // Connection failures must remain visible even when device cards overflow.
+                if let Some(error) = &self.error {
+                    message(ui, "Не удалось подключиться", error, true);
+                    ui.add_space(12.0);
+                }
                 egui::ScrollArea::vertical()
                     .id_salt(("menu-page", self.page as u8))
                     .scroll_bar_visibility(if compact {
@@ -644,10 +740,6 @@ impl ConsoleApp {
                             Page::Color => self.color_page(ui),
                             Page::Discord => self.discord_page(ui),
                             Page::Settings => self.settings_page(ui, ctx),
-                        }
-                        if let Some(error) = &self.error {
-                            ui.add_space(14.0);
-                            message(ui, "Не удалось подключиться", error, true);
                         }
                         if let Some(notice) = &self.notice {
                             ui.add_space(10.0);

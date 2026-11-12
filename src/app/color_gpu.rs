@@ -5,7 +5,6 @@ use eframe::{egui, egui_wgpu};
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 
 pub(super) fn install(state: &egui_wgpu::RenderState) {
-    super::upscale_gpu::install(state);
     let resources = Resources::new(&state.device, state.target_format);
     state.renderer.write().callback_resources.insert(resources);
 }

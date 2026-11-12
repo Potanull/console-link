@@ -139,3 +139,15 @@ Windows GNU: `cargo build --locked` и `cargo test --all-targets --locked` пр�
 - Проверены RGB-константы, контуры/градиенты/текстуры, настройки резкости, native/downscale bypass, переиспользование текстур, DPI и округление viewport, snapshot параметров при смене кадра/режима/размера. Обработанные PNG нечётного размера29x21 прочитаны обратно с точными bytes/dimensions/sRGB для NIS/FSR и ненейтрального цвета; оригинальный экспорт сохраняет исходные пиксели/размер.
 - Release UI визуально проверен1200x800 и оверлей960x600 для FSR и NIS; элементы внутри ограниченного drawer, содержимое прокручивается. Экспорт ограничен одним запросом; виден статус сохранения. Сравнение не меняет сохранённые настройки. Лицензии AMD/NVIDIA включены в поставляемый THIRD_PARTY_LICENSES.txt.
 - RTX Video НЕ реализован: официальный SDK не получен (developer download -> login, публичные NGC routes ->HTTP403). Оба предложенных пользователем проекта также требуют отдельный SDK. Пункт интерфейса недоступен; наличие настройки enum не является реализацией. Нужны официальный архив, native-интеграция и реальные GPU-проверки. Физический HDMI-захват и macOS в этой работе не проверены. Новый релиз не опубликован.
+
+
+## 0.6.1 macOS capture regression (2026-11-12)
+
+- Reproduced 0.6.0 rejection on the connected USB capture card: `This capture device does not support explicit input format selection.` The required InputPriority preset is not a macOS capture prerequisite.
+- Removed the preset gate. The production connection path then started native video and the selected audio pair (muted), delivered 1920x1080, and presented a frame in the gameplay UI.
+- A post-start equality check of activeVideoMin/MaxFrameDuration proved too strict on this UVC driver and reproduced a new 50 FPS startup rejection. Removed this metadata gate. The selected mode stays labeled as selected; the UI measures received FPS separately.
+- Error banner previously fell below the visible area. Renderer snapshots now show it above the scrolling setup cards at 1040x760 and 1040x720.
+- Actual Metal GPU tests passed on Apple M2 Pro for Standard/NIS/FSR1 constant-pattern render/readback, resource reuse and RTX error fallback. This does not certify every Apple Silicon GPU/OS combination.
+- Hardware diagnostics record startup stages only, not media, credentials, settings or device IDs. Diagnostic runs use isolated defaults and stop after 30 seconds.
+- Audible output, end-to-end HDMI latency and Discord calls are not covered by these checks.
+- Spatial GPU initialization is lazy and uses validation/internal/out-of-memory error scopes; failures are cached and select ordinary rendering. Enhanced screenshot initialization uses the same guarded creation. RTX is disabled in the selector outside Windows.

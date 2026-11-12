@@ -6,15 +6,15 @@
 
 ![Интерфейс Console Link](assets/ui-preview.png)
 
-## Скачать 0.4.0
+## Скачать 0.6.1
 
 | Платформа | Файл |
 |---|---|
-| Windows 11 x64 | [Установщик](https://github.com/Potanull/console-link/releases/download/v0.4.0/Console-Link-0.4.0-Setup-x64.exe) |
-| macOS Apple Silicon | [Приложение в ZIP](https://github.com/Potanull/console-link/releases/download/v0.4.0/console-link-0.4.0-macos-arm64.zip) |
-| Windows x64 без установки | [Portable ZIP](https://github.com/Potanull/console-link/releases/download/v0.4.0/console-link-0.4.0-windows-x64.zip) |
+| Windows 11 x64 | [Установщик](https://github.com/Potanull/console-link/releases/download/v0.6.1/Console-Link-0.6.1-Setup-x64.exe) |
+| macOS Apple Silicon | [Приложение в ZIP](https://github.com/Potanull/console-link/releases/download/v0.6.1/console-link-0.6.1-macos-arm64.zip) |
+| Windows x64 без установки | [Portable ZIP](https://github.com/Potanull/console-link/releases/download/v0.6.1/console-link-0.6.1-windows-x64.zip) |
 
-[Страница релиза](https://github.com/Potanull/console-link/releases/tag/v0.4.0) · [SHA256SUMS](https://github.com/Potanull/console-link/releases/download/v0.4.0/SHA256SUMS.txt)
+[Страница релиза](https://github.com/Potanull/console-link/releases/tag/v0.6.1) · [SHA256SUMS](https://github.com/Potanull/console-link/releases/download/v0.6.1/SHA256SUMS.txt)
 
 Windows-установщик устанавливает приложение для текущего пользователя, добавляет меню Пуск и штатное удаление. Значок рабочего стола необязателен. Обязательные права администратора не требуются. На Mac распакуй ZIP и перенеси `Console Link.app` в «Программы».
 
@@ -33,6 +33,8 @@ Windows-установщик устанавливает приложение д�
 - Восстановление после потери ранее подключенного устройства. Ручное отключение отменяет повторы.
 
 ## Подключение
+
+В 0.6.1 исправлен запуск USB-карт на macOS: InputPriority больше не требуется, формат и FPS задаются через AVFoundation напрямую. Ошибка подключения теперь видна над карточками, без прокрутки.
 
 1. Switch в док-станции: HDMI OUT дока -> HDMI IN карты; USB data-порт карты -> Mac/PC. Type-C питания не заменяет порт данных.
 2. Открой Console Link. Нажми «Обновить устройства», выбери карту. Режим изображения выбирается автоматически; лимит FPS и ручной режим доступны в настройках. Встроенная веб-камера не выбирается автоматически.

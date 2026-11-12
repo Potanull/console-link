@@ -12,8 +12,8 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_av_foundation::{
     AVAuthorizationStatus, AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceFormat,
-    AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession, AVCaptureSessionPresetInputPriority,
-    AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
+    AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession, AVCaptureVideoDataOutput,
+    AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
 };
 use objc2_core_media::{CMSampleBuffer, CMTime, CMVideoFormatDescriptionGetDimensions};
 use objc2_core_video::{
@@ -320,11 +320,8 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
         session.addInput(&input);
         session.addOutput(&output);
     }
-    if !unsafe { session.canSetSessionPreset(AVCaptureSessionPresetInputPriority) } {
-        unsafe { session.commitConfiguration() };
-        return Err("This capture device does not support explicit input format selection.".into());
-    }
-    unsafe { session.setSessionPreset(AVCaptureSessionPresetInputPriority) };
+    // InputPriority is an iOS/Catalyst preset, not a macOS capability gate.
+    // Configure the advertised macOS device format and frame durations directly.
     unsafe { device.lockForConfiguration() }.map_err(|e| {
         unsafe { session.commitConfiguration() };
         format!(
@@ -382,6 +379,20 @@ fn open(device_id: &str, mode: &VideoMode, sink: FrameSink) -> Result<NativeSess
     if !unsafe { owned.session.isRunning() } {
         return Err("Capture could not start. Check the card, Camera permission, and other apps using the device.".into());
     }
+    // Preset-managed drivers may renegotiate at startRunning. Never report a
+    // different input size as the mode the user selected.
+    let actual_format = unsafe { device.activeFormat() };
+    let actual_description = unsafe { actual_format.formatDescription() };
+    let actual_size = unsafe { CMVideoFormatDescriptionGetDimensions(&actual_description) };
+    if actual_size.width != mode.width as i32 || actual_size.height != mode.height as i32 {
+        return Err(format!(
+            "The card selected {}x{} instead of {}x{}. Choose another supported mode.",
+            actual_size.width, actual_size.height, mode.width, mode.height
+        ));
+    }
+    // UVC drivers may expose a frame-duration range after starting. It is
+    // not a delivery-rate guarantee: keep receiving frames and measure their
+    // actual rate in the UI instead of rejecting a usable video stream.
     Ok(owned)
 }
 

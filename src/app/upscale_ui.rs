@@ -83,15 +83,22 @@ impl ConsoleApp {
     pub(super) fn available_upscale_settings(&mut self) -> UpscaleSettings {
         let mut settings = effective_settings(self.settings.upscale, self.upscale_comparison);
         self.upscale_error = None;
-        if settings.mode == UpscaleMode::RtxVideo {
+        if settings.mode != UpscaleMode::Standard {
             let result = self
                 .export_gpu
                 .as_ref()
                 .ok_or_else(|| "GPU недоступен".to_owned())
-                .and_then(upscale_gpu::rtx_status);
+                .and_then(|state| {
+                    upscale_gpu::ensure(state, settings.mode)?;
+                    if settings.mode == UpscaleMode::RtxVideo {
+                        upscale_gpu::rtx_status(state)?;
+                    }
+                    Ok(())
+                });
             if let Err(error) = result {
                 self.upscale_error = Some(format!(
-                    "RTX Video недоступен: {error}. Используется обычное масштабирование."
+                    "{} недоступен: {error}. Используется обычное масштабирование.",
+                    mode_name(settings.mode)
                 ));
                 settings.mode = UpscaleMode::Standard;
             }
@@ -108,7 +115,10 @@ impl ConsoleApp {
                 egui::ComboBox::from_id_salt("upscale-mode").width(ui.available_width().min(300.0))
                     .selected_text(mode_name(self.settings.upscale.mode)).show_ui(ui, |ui| {
                         for mode in [UpscaleMode::Standard, UpscaleMode::Nis, UpscaleMode::Fsr1, UpscaleMode::RtxVideo] {
-                            ui.selectable_value(&mut self.settings.upscale.mode, mode, mode_name(mode));
+                            ui.add_enabled_ui(mode != UpscaleMode::RtxVideo || cfg!(target_os = "windows"), |ui| {
+                                ui.selectable_value(&mut self.settings.upscale.mode, mode, mode_name(mode))
+                                    .on_disabled_hover_text("RTX Video требует Windows и видеокарту NVIDIA RTX.");
+                            });
                         }
                     });
                 let sharpness = match self.settings.upscale.mode {

@@ -5,6 +5,7 @@ mod artwork;
 mod color_gpu;
 mod color_integration;
 mod color_page;
+mod connection_diagnostics;
 mod equalizer;
 mod monitoring;
 mod nintendo;
@@ -165,6 +166,12 @@ pub struct ConsoleApp {
     brand: egui::TextureHandle,
     snapshot_path: Option<std::path::PathBuf>,
     snapshot_requested: bool,
+    connection_diagnostics: Option<Arc<connection_diagnostics::ConnectionDiagnostics>>,
+    diagnostic_card: Option<String>,
+    diagnostic_attempted: bool,
+    diagnostic_permission_retried: bool,
+    diagnostic_first_presented: bool,
+    diagnostic_started: Instant,
 }
 
 impl ConsoleApp {
@@ -202,7 +209,25 @@ impl ConsoleApp {
             Some("settings") => Page::Settings,
             _ => Page::Session,
         };
-        let (store, settings, warning) = if snapshot_path.is_some() {
+        let diagnostic_card = if snapshot_path.is_none() {
+            argument_value("--diagnose-card")
+        } else {
+            None
+        };
+        let (connection_diagnostics, diagnostic_error) = if snapshot_path.is_none() {
+            match argument_value("--connection-log") {
+                Some(path) => match connection_diagnostics::ConnectionDiagnostics::new(path.into())
+                {
+                    Ok(trace) => (Some(Arc::new(trace)), None),
+                    Err(error) => (None, Some(error)),
+                },
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+        let isolated = snapshot_path.is_some() || diagnostic_card.is_some();
+        let (store, settings, warning) = if isolated {
             (None, Settings::default(), None)
         } else {
             let (store, settings, warning) = SettingsStore::open();
@@ -212,9 +237,7 @@ impl ConsoleApp {
         let (frames_tx, frames_rx) = bounded(config::FRAME_QUEUE_CAPACITY);
         let discord = DiscordWorker::new();
         discord.require_account(None);
-        let discord_auth = snapshot_path
-            .is_none()
-            .then(|| DiscordAuth::new(DEFAULT_APPLICATION_ID.to_owned()));
+        let discord_auth = (!isolated).then(|| DiscordAuth::new(DEFAULT_APPLICATION_ID.to_owned()));
         let mut app = Self {
             settings,
             store,
@@ -250,7 +273,7 @@ impl ConsoleApp {
             upscale_preview_status: None,
             export_gpu: context.wgpu_render_state.as_ref().cloned(),
             notice: warning,
-            error: None,
+            error: diagnostic_error,
             last_frame: Instant::now(),
             started: Instant::now(),
             started_unix: 0,
@@ -292,6 +315,12 @@ impl ConsoleApp {
             brand,
             snapshot_path,
             snapshot_requested: false,
+            connection_diagnostics,
+            diagnostic_card,
+            diagnostic_attempted: false,
+            diagnostic_permission_retried: false,
+            diagnostic_first_presented: false,
+            diagnostic_started: Instant::now(),
         };
         if argument_value("--ui-page").as_deref() == Some("volume") && app.snapshot_path.is_some() {
             app.feedback.volume_changed(0.0);
@@ -320,6 +349,10 @@ impl ConsoleApp {
             app.settings.nintendo_friend_id = "0123456789abcdef".into();
             app.nintendo.preview();
         }
+        // Render a connection-failure fixture only in isolated snapshot mode.
+        if app.snapshot_path.is_some() && std::env::args().any(|arg| arg == "--ui-error-preview") {
+            app.error = Some("Не удалось открыть аудиоустройство карты захвата. Проверь выбранный выход и разрешение микрофона в macOS.".into());
+        }
         if app.snapshot_path.is_some() {
             app.settings.upscale.mode = match argument_value("--ui-upscale-mode").as_deref() {
                 Some("nis") => console_link::upscale::UpscaleMode::Nis,
@@ -338,13 +371,176 @@ impl ConsoleApp {
                 app.displayed = Some(app.color_test_pattern.clone());
             }
         }
+        if let Some(trace) = &app.connection_diagnostics {
+            trace.record(
+                "application_started",
+                "connection diagnostics enabled; no image recording",
+            );
+        }
+        if app.diagnostic_card.is_some() {
+            context
+                .egui_ctx
+                .send_viewport_cmd(egui::ViewportCommand::Title(
+                    "Console Link - Проверка подключения".into(),
+                ));
+        }
         app.refresh(context.egui_ctx.clone());
         app
     }
 }
 
+impl ConsoleApp {
+    fn diagnostic_tick(&mut self, ctx: &egui::Context) {
+        let Some(card_name) = self.diagnostic_card.clone() else {
+            return;
+        };
+        if !self.diagnostic_first_presented
+            && let Some(frame) = &self.displayed
+        {
+            self.diagnostic_first_presented = true;
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record(
+                    "frame_presented",
+                    &format!("{}x{}", frame.width, frame.height),
+                );
+            }
+        }
+        if !self.diagnostic_attempted && !self.refreshing {
+            self.diagnostic_attempted = true;
+            if self.connection_diagnostics.is_none() {
+                self.error = Some(
+                    "Для проверки нужен доступный --connection-log с новым абсолютным путем."
+                        .into(),
+                );
+                return;
+            }
+            let mut matches = self
+                .devices
+                .video
+                .iter()
+                .filter(|device| device.name == card_name);
+            let selected = matches.next().map(|device| device.id.clone());
+            if selected.is_none() || matches.next().is_some() {
+                self.error = Some(
+                    "Выбранная для проверки карта отсутствует или ее имя неоднозначно.".into(),
+                );
+                if let Some(trace) = &self.connection_diagnostics {
+                    trace.record(
+                        "diagnostic_selection_failed",
+                        "no unique exact card name match",
+                    );
+                }
+                return;
+            }
+            self.settings.video_id = selected.expect("checked selected card");
+            self.settings.audio_input_id.clear();
+            self.settings.audio_output_id.clear();
+            let input_name = argument_value("--diagnose-audio-input");
+            let output_name = argument_value("--diagnose-audio-output");
+            if input_name.is_some() || output_name.is_some() {
+                let (Some(input_name), Some(output_name)) = (input_name, output_name) else {
+                    self.error =
+                        Some("Для проверки звука нужны точные имена входа и выхода.".into());
+                    return;
+                };
+                let mut inputs = self
+                    .devices
+                    .inputs
+                    .iter()
+                    .filter(|device| device.name == input_name);
+                let mut outputs = self
+                    .devices
+                    .outputs
+                    .iter()
+                    .filter(|device| device.name == output_name);
+                let input = inputs.next();
+                let output = outputs.next();
+                if input.is_none()
+                    || output.is_none()
+                    || inputs.next().is_some()
+                    || outputs.next().is_some()
+                {
+                    self.error = Some(
+                        "Аудиоустройства для проверки отсутствуют или их имена неоднозначны."
+                            .into(),
+                    );
+                    if let Some(trace) = &self.connection_diagnostics {
+                        trace.record(
+                            "diagnostic_audio_selection_failed",
+                            "no unique exact input/output match",
+                        );
+                    }
+                    return;
+                }
+                self.settings.audio_input_id = input.expect("checked input").id.clone();
+                self.settings.audio_output_id = output.expect("checked output").id.clone();
+                self.settings.muted = true;
+                self.settings.gain = 0.0;
+            }
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record(
+                    "diagnostic_selection_ready",
+                    if self.settings.audio_input_id.is_empty() {
+                        "exact requested card; video only; default supported mode"
+                    } else {
+                        "exact requested card and audio pair; muted; default supported mode"
+                    },
+                );
+            }
+            self.connect(ctx.clone());
+        } else if !self.diagnostic_permission_retried
+            && !self.opening
+            && self.active.is_none()
+            && self
+                .error
+                .as_ref()
+                .is_some_and(|error| error.to_lowercase().contains("camera access"))
+            && diagnostic_camera_authorized()
+        {
+            self.diagnostic_permission_retried = true;
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record(
+                    "permission_granted_retry",
+                    "camera permission granted; retrying once",
+                );
+            }
+            self.connect(ctx.clone());
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn diagnostic_camera_authorized() -> bool {
+    use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeVideo};
+    // Read-only query in this app's own permission context; never resets TCC.
+    unsafe { AVMediaTypeVideo }.is_some_and(|media| unsafe {
+        AVCaptureDevice::authorizationStatusForMediaType(media) == AVAuthorizationStatus::Authorized
+    })
+}
+#[cfg(not(target_os = "macos"))]
+fn diagnostic_camera_authorized() -> bool {
+    false
+}
+
 impl eframe::App for ConsoleApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.diagnostic_card.is_some()
+            && self.diagnostic_started.elapsed() > Duration::from_secs(30)
+        {
+            if let Some(trace) = &self.connection_diagnostics {
+                trace.record(
+                    "diagnostic_finished",
+                    if self.diagnostic_first_presented {
+                        "frame_presented"
+                    } else {
+                        "no_frame_presented"
+                    },
+                );
+            }
+            self.stop();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         if self.snapshot_cycle
             && !self.snapshot_cycle_closed
             && self.started.elapsed() > Duration::from_millis(1300)
@@ -441,6 +637,7 @@ impl eframe::App for ConsoleApp {
         let previous_volume = (self.settings.gain, self.settings.muted);
         self.poll_nintendo(ctx);
         self.events(ctx);
+        self.diagnostic_tick(ctx);
         if let Some(started) = self.session_started {
             let peak = self
                 .active

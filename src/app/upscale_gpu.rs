@@ -22,12 +22,77 @@ pub(super) fn rtx_status(state: &egui_wgpu::RenderState) -> Result<(), String> {
 }
 
 pub(super) const MAX_TARGET_DIMENSION: u32 = 8192;
-pub(super) fn install(state: &egui_wgpu::RenderState) {
-    state
-        .renderer
-        .write()
-        .callback_resources
-        .insert(Resources::new(&state.device, state.target_format));
+/// Compile spatial shaders only when an enhanced mode is requested. A driver
+/// validation failure must leave the ordinary video renderer available.
+pub(super) fn ensure(state: &egui_wgpu::RenderState, mode: UpscaleMode) -> Result<(), String> {
+    ensure_resources(
+        &state.device,
+        state.target_format,
+        &mut state.renderer.write().callback_resources,
+        mode,
+    )
+}
+
+struct InitializationError(String);
+
+fn ensure_resources(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    resources: &mut CallbackResources,
+    mode: UpscaleMode,
+) -> Result<(), String> {
+    if mode == UpscaleMode::Standard || resources.get::<Resources>().is_some() {
+        return Ok(());
+    }
+    if let Some(error) = resources.get::<InitializationError>() {
+        return Err(error.0.clone());
+    }
+    match checked_gpu_creation(device, || Resources::new(device, format)) {
+        Ok(created) => {
+            resources.insert(created);
+            Ok(())
+        }
+        Err(error) => {
+            resources.insert(InitializationError(error.clone()));
+            Err(error)
+        }
+    }
+}
+
+fn checked_gpu_creation<T>(device: &wgpu::Device, create: impl FnOnce() -> T) -> Result<T, String> {
+    device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    device.push_error_scope(wgpu::ErrorFilter::Internal);
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let created = create();
+    let mut failure = None;
+    for _ in 0..3 {
+        if let Some(error) = wait_for_gpu(device.pop_error_scope()) {
+            failure.get_or_insert_with(|| error.to_string());
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(created),
+    }
+}
+
+fn wait_for_gpu<T>(future: impl std::future::Future<Output = T>) -> T {
+    use std::task::{Context, Poll, Wake, Waker};
+    struct ThreadWake(std::thread::Thread);
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(result) => return result,
+            Poll::Pending => std::thread::park(),
+        }
+    }
 }
 fn validate(
     frame: &VideoFrame,
@@ -641,7 +706,9 @@ pub(super) fn render_export(
         }
         return readback(device, queue, encoder, &output, target);
     }
-    let mut resources = Resources::new(device, wgpu::TextureFormat::Rgba8Unorm);
+    let mut resources = checked_gpu_creation(device, || {
+        Resources::new(device, wgpu::TextureFormat::Rgba8Unorm)
+    })?;
     let mut encoder = device.create_command_encoder(&Default::default());
     resources.update(
         device,
@@ -741,6 +808,73 @@ mod tests {
         eprintln!("Spatial adapter: {:?}", adapter.get_info());
         block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap()
     }
+    #[test]
+    fn lazy_spatial_initialization_preserves_standard_and_reuses_gpu_resources() {
+        let (device, _) = gpu();
+        let mut resources = CallbackResources::default();
+        ensure_resources(
+            &device,
+            wgpu::TextureFormat::Rgba8Unorm,
+            &mut resources,
+            UpscaleMode::Standard,
+        )
+        .unwrap();
+        assert!(resources.get::<Resources>().is_none());
+        ensure_resources(
+            &device,
+            wgpu::TextureFormat::Rgba8Unorm,
+            &mut resources,
+            UpscaleMode::Nis,
+        )
+        .unwrap();
+        let first = resources.get::<Resources>().unwrap() as *const Resources;
+        ensure_resources(
+            &device,
+            wgpu::TextureFormat::Rgba8Unorm,
+            &mut resources,
+            UpscaleMode::Fsr1,
+        )
+        .unwrap();
+        assert_eq!(
+            first,
+            resources.get::<Resources>().unwrap() as *const Resources
+        );
+    }
+
+    #[test]
+    fn shader_validation_failure_returns_error_and_keeps_standard_available() {
+        let (device, _) = gpu();
+        let error = checked_gpu_creation(&device, || {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Deliberately invalid spatial shader"),
+                source: wgpu::ShaderSource::Wgsl("invalid shader".into()),
+            })
+        })
+        .expect_err("Shader failure must return Result, not panic");
+        let mut resources = CallbackResources::default();
+        resources.insert(InitializationError(error.clone()));
+        ensure_resources(
+            &device,
+            wgpu::TextureFormat::Rgba8Unorm,
+            &mut resources,
+            UpscaleMode::Standard,
+        )
+        .unwrap();
+        assert_eq!(
+            ensure_resources(
+                &device,
+                wgpu::TextureFormat::Rgba8Unorm,
+                &mut resources,
+                UpscaleMode::Fsr1
+            )
+            .unwrap_err(),
+            error
+        );
+        assert!(resources.get::<Resources>().is_none());
+        let _ordinary_video =
+            super::super::color_gpu::Resources::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+    }
+
     #[test]
     #[ignore = "Requires packaged RTX Video runtime and NVIDIA RTX hardware"]
     fn real_gpu_rtx_evaluation() {

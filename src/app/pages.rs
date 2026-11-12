@@ -138,7 +138,7 @@ impl ConsoleApp {
                     theme::subtitle(
                         ui,
                         &format!(
-                            "Режим карты: {} FPS. Ограничение показа: {} FPS.",
+                            "Выбранный режим: {} FPS. Ограничение показа: {} FPS.",
                             nominal_fps(mode),
                             self.settings.capture_preferences.preferred_fps
                         ),

@@ -1,0 +1,11 @@
+{
+  "name": "console-link-nintendo-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "nxapi": "1.6.1-next.257"
+  },
+  "overrides": {
+    "register-scheme": "0.0.2"
+  }
+}

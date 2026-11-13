@@ -11,6 +11,11 @@ on:
         type: boolean
         required: true
         default: false
+      nintendo_components_only:
+        description: Verify private Nintendo installation without GPU tests or release packaging
+        type: boolean
+        required: true
+        default: false
       release_tag:
         description: Release tag matching Cargo.toml (for example v0.6.1)
         type: string
@@ -37,6 +42,7 @@ jobs:
         env:
           REQUESTED_TAG: ${{ inputs.release_tag }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          NINTENDO_COMPONENTS_ONLY: ${{ inputs.nintendo_components_only }}
         run: |
           python3 - <<'PY'
           import os, re, tomllib, plistlib
@@ -47,6 +53,8 @@ jobs:
           if plistlib.loads(Path('packaging/Info.plist').read_bytes())['CFBundleShortVersionString'] != version:
               raise SystemExit('macOS bundle version must match Cargo.toml')
           tag = 'v' + version
+          if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ.get('NINTENDO_COMPONENTS_ONLY') == 'true':
+              raise SystemExit('Component verification cannot publish an application release')
           if os.environ.get('PUBLISH_RELEASE') == 'true':
               if os.environ['GITHUB_REF'] != 'refs/heads/main':
                   raise SystemExit('Release publication is restricted to main')
@@ -85,16 +93,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets --target ${{ matrix.target }} -- -D warnings
       - name: Tests
+        if: ${{ !inputs.nintendo_components_only }}
         timeout-minutes: 5
         run: cargo test --locked --target ${{ matrix.target }}
+      - name: Verify private Nintendo component installation
+        timeout-minutes: 8
+        shell: bash
+        env:
+          RUNTIME_TEST_DIR: ${{ runner.temp }}/console-link-nintendo-check
+        run: cargo run --locked -- --install-nintendo-runtime "$RUNTIME_TEST_DIR"
       - name: Package macOS
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && !inputs.nintendo_components_only
         run: |
           bash scripts/package-macos.sh
           mkdir -p dist/release
           cp dist/console-link-macos-arm64.zip "dist/release/console-link-${CONSOLE_LINK_VERSION}-macos-arm64.zip"
       - name: Package Windows and verify installation
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && !inputs.nintendo_components_only
         timeout-minutes: 15
         shell: pwsh
         run: |
@@ -103,6 +118,7 @@ jobs:
           Copy-Item "dist/console-link-$env:CONSOLE_LINK_VERSION-windows-x64.zip" dist/release/
           Copy-Item "dist/Console-Link-$env:CONSOLE_LINK_VERSION-Setup-x64.exe" dist/release/
       - name: Upload release files
+        if: ${{ !inputs.nintendo_components_only }}
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
@@ -118,7 +134,7 @@ jobs:
 
   publish:
     needs: [validate, check]
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && !inputs.nintendo_components_only
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

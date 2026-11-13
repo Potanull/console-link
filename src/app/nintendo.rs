@@ -11,6 +11,7 @@ pub(super) struct NintendoState {
     error: Option<String>,
     game: Option<String>,
     started_at: i64,
+    components: super::nintendo_install::ComponentInstall,
 }
 impl NintendoState {
     pub(super) fn preview(&mut self) {
@@ -83,6 +84,9 @@ impl ConsoleApp {
         }
     }
     pub(super) fn poll_nintendo(&mut self, ctx: &egui::Context) {
+        if self.nintendo.components.poll() {
+            self.nintendo.last_attempt = None;
+        }
         if self.snapshot_path.is_some() && !std::env::args().any(|a| a == "--ui-nintendo-live") {
             return;
         }
@@ -149,6 +153,8 @@ impl ConsoleApp {
         );
 
         if self.settings.nintendo_enabled {
+            self.nintendo.components.show(ui);
+            ui.add_space(8.0);
             egui::ComboBox::from_id_salt("nintendo-friend")
                 .selected_text(
                     self.nintendo

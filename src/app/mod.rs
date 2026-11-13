@@ -9,6 +9,7 @@ mod connection_diagnostics;
 mod equalizer;
 mod monitoring;
 mod nintendo;
+mod nintendo_install;
 mod pages;
 mod presentation;
 mod session;

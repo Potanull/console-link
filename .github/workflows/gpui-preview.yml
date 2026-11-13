@@ -1,0 +1,54 @@
+name: GPUI preview
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'experiments/gpui-preview/**'
+      - 'src/capture/**'
+      - '.github/workflows/gpui-preview.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: experiments/gpui-preview
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust components
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: experiments/gpui-preview
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Source lifecycle tests
+        run: cargo test --locked
+      - name: Build experimental frontend
+        run: cargo build --locked
+      - name: Package local macOS preview
+        if: runner.os == 'macOS'
+        run: |
+          bash scripts/package-macos.sh
+          ditto -c -k --keepParent "dist/Console Link GPUI Preview.app" dist/console-link-gpui-preview-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gpui-preview-${{ matrix.os }}
+          path: |
+            experiments/gpui-preview/dist/console-link-gpui-preview-macos.zip
+            experiments/gpui-preview/target/debug/console-link-gpui-preview.exe
+          if-no-files-found: error

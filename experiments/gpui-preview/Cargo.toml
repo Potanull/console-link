@@ -1,0 +1,25 @@
+[package]
+name = "console-link-gpui-preview"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+gpui = { version = "=0.2.2", default-features = false, features = ["font-kit", "runtime_shaders", "windows-manifest"] }
+image = { version = "0.25", default-features = false }
+console-link = { path = "../.." }
+crossbeam-channel = "0.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSScreen"] }
+raw-window-handle = "0.6"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package.console-link]
+opt-level = 2

@@ -1,3 +1,5 @@
+> Исторический проект первого frontend. Основное приложение перенесено на GPUI; актуальная схема: [gpui-migration.md](gpui-migration.md). Сведения ниже об egui относятся к варианту отката `legacy-ui`.
+
 ---
 
 > Исторический проект первой версии. Изменения 0.3 описаны в [актуальном проекте игрового режима и Discord](superpowers/specs/2026-11-09-playback-discord-design.md): одно окно с боковой панелью, автоматический режим карты, OAuth PKCE и account-matched IPC. Текущие проверки: [validation.md](validation.md).

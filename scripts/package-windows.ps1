@@ -21,7 +21,7 @@ try {
     $previousRustFlags = $env:RUSTFLAGS
     try {
         $env:RUSTFLAGS = "$previousRustFlags -C target-feature=+crt-static".Trim()
-        & cargo build --locked --release --target x86_64-pc-windows-msvc
+        & cargo build --locked --release --target x86_64-pc-windows-msvc --bin console-link
         if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed.' }
     } finally {
         $env:RUSTFLAGS = $previousRustFlags
@@ -30,7 +30,9 @@ try {
     $output = Join-Path $projectRoot 'dist'
     $portable = Join-Path $output 'windows-portable'
     New-Item -ItemType Directory -Force $portable | Out-Null
-    Copy-Item 'target/x86_64-pc-windows-msvc/release/console-link.exe' (Join-Path $portable 'console-link.exe') -Force
+    $targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $projectRoot 'target' }
+    if (-not [IO.Path]::IsPathRooted($targetDirectory)) { $targetDirectory = Join-Path $projectRoot $targetDirectory }
+    Copy-Item (Join-Path $targetDirectory 'x86_64-pc-windows-msvc/release/console-link.exe') (Join-Path $portable 'console-link.exe') -Force
     foreach ($name in @('LICENSE', 'README.md', 'THIRD_PARTY.md', 'THIRD_PARTY_LICENSES.txt')) {
         Copy-Item $name (Join-Path $portable $name) -Force
     }

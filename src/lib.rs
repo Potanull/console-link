@@ -21,13 +21,18 @@ mod platform_configuration {
 
     #[test]
     fn embedded_window_icon_decodes() {
-        let icon = eframe::icon_data::from_png_bytes(include_bytes!(concat!(
+        let icon = image::load_from_memory(include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/assets/window-icon.png"
         )))
         .unwrap();
-        assert_eq!((icon.width, icon.height), (256, 256));
-        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        assert_eq!((icon.width(), icon.height()), (256, 256));
+        assert_eq!(icon.to_rgba8().len(), 256 * 256 * 4);
     }
 }
 pub mod nintendo;
+
+pub mod runtime;
+
+pub mod artwork;
+pub mod gpu;

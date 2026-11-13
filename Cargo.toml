@@ -1,12 +1,31 @@
 [package]
 name = "console-link"
+default-run = "console-link"
 version = "0.6.1"
 edition = "2024"
 license = "MIT"
 description = "A focused desktop companion for HDMI capture cards"
 
+[features]
+default = ["gpui-ui"]
+gpui-ui = ["dep:gpui", "dep:unicode-segmentation", "dep:anyhow"]
+legacy-ui = ["dep:eframe"]
+
+[[bin]]
+name = "console-link"
+path = "src/main.rs"
+required-features = ["gpui-ui"]
+
+[[bin]]
+name = "console-link-legacy"
+path = "src/legacy.rs"
+required-features = ["legacy-ui"]
+
 [dependencies]
-eframe = { version = "0.33", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland"] }
+anyhow = { version = "1", optional = true }
+gpui = { version = "=0.2.2", optional = true, default-features = false, features = ["font-kit", "runtime_shaders", "windows-manifest"] }
+unicode-segmentation = { version = "1", optional = true }
+eframe = { version = "0.33", optional = true, default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 directories = "6"
@@ -27,7 +46,7 @@ wgpu = { version = "27", default-features = false, features = ["metal", "dx12", 
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSScreen", "NSCursor"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSScreen", "NSCursor", "NSGraphics", "NSApplication"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSError", "NSObject", "NSDictionary", "NSValue"] }
 objc2-av-foundation = { version = "0.3", features = ["AVCaptureDevice", "AVCaptureInput", "AVCaptureOutput", "AVCaptureSession", "AVCaptureVideoDataOutput", "AVMediaFormat", "objc2-core-media", "objc2-core-video", "dispatch2"] }
 objc2-core-media = "0.3"

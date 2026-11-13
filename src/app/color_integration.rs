@@ -152,46 +152,7 @@ pub(super) fn save_screenshot(
     original: bool,
     directory: &std::path::Path,
 ) -> Result<String, String> {
-    let expected = (frame.width as usize)
-        .checked_mul(frame.height as usize)
-        .and_then(|n| n.checked_mul(4));
-    if frame.width == 0 || frame.height == 0 || expected != Some(frame.rgba.len()) {
-        return Err("Invalid screenshot frame".into());
-    }
-    let effective = if original {
-        ColorSettings::default()
-    } else {
-        *settings
-    };
-    let graded = if effective.is_identity() {
-        None
-    } else {
-        let mut bytes = frame.rgba.clone();
-        console_link::color::apply_rgba(&mut bytes, &effective)?;
-        Some(bytes)
-    };
-    std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
-    let time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let suffix = if original { "-original" } else { "" };
-    let path = directory.join(format!("console-{time}{suffix}.png"));
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), frame.width, frame.height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    writer
-        .write_image_data(graded.as_deref().unwrap_or(&frame.rgba))
-        .map_err(|e| e.to_string())?;
-    writer.finish().map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().into_owned())
+    console_link::gpu::save_screenshot(frame, settings, original, directory)
 }
 
 #[cfg(test)]

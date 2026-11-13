@@ -1,36 +1,33 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use console_link::config::app as config;
+#[path = "platform/app_return.rs"]
+mod app_return;
+#[path = "gpui/mod.rs"]
+mod desktop;
 
-mod app;
-mod platform;
-
-fn main() -> eframe::Result {
-    // A protocol invocation only returns focus to an existing login. It never
-    // carries an authorization code and must not start a second media process.
-    if std::env::args()
-        .any(|arg| arg == "--return-from-discord" || arg == "console-link://auth/complete")
+fn main() {
+    if std::env::args().any(|a| a == "--return-from-discord" || a == "console-link://auth/complete")
     {
-        platform::app_return::activate_existing();
-        return Ok(());
+        app_return::activate_existing();
+        return;
     }
-    if let Some(directory) = argument_value("--install-nintendo-runtime") {
+    if let Some(directory) = argument("--install-nintendo-runtime") {
         let directory = std::path::PathBuf::from(directory);
         if !directory.is_absolute() {
             eprintln!("Nintendo install check requires an absolute destination.");
             std::process::exit(1);
         }
-        let cancelled = console_link::nintendo::installation::Cancellation::default();
+        let cancel = console_link::nintendo::installation::Cancellation::default();
         if let Err(error) = console_link::nintendo::installation::install(
             &directory,
             |stage| eprintln!("{}", stage.label()),
-            &cancelled,
+            &cancel,
         ) {
             eprintln!("{error}");
             std::process::exit(1);
         }
         println!("Nintendo components verified.");
-        return Ok(());
+        return;
     }
     if std::env::args().any(|a| a == "--list-devices") {
         match console_link::capture::enumerate() {
@@ -42,7 +39,7 @@ fn main() -> eframe::Result {
                     }
                 }
             }
-            Err(error) => eprintln!("Video: {error}"),
+            Err(e) => eprintln!("Video: {e}"),
         }
         for (label, result) in [
             ("Audio inputs", console_link::audio::input_devices()),
@@ -51,54 +48,19 @@ fn main() -> eframe::Result {
             println!("{label}:");
             match result {
                 Ok(devices) => {
-                    for device in devices {
-                        println!("  {}", device.name);
+                    for d in devices {
+                        println!("  {}", d.name);
                     }
                 }
-                Err(error) => eprintln!("  {error}"),
+                Err(e) => eprintln!("{e}"),
             }
         }
-        return Ok(());
+        return;
     }
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(config::TITLE)
-            .with_icon(window_icon())
-            .with_inner_size([
-                dimension_argument("--ui-width", 0),
-                dimension_argument("--ui-height", 1),
-            ])
-            .with_min_inner_size(config::MIN_WINDOW_SIZE),
-        renderer: eframe::Renderer::Wgpu,
-        ..Default::default()
-    };
-    eframe::run_native(
-        config::TITLE,
-        options,
-        Box::new(|context| Ok(Box::new(app::ConsoleApp::new(context)))),
-    )
+    desktop::run();
 }
 
-fn window_icon() -> eframe::egui::IconData {
-    eframe::icon_data::from_png_bytes(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/assets/window-icon.png"
-    )))
-    .expect("embedded application icon is valid PNG")
-}
-
-fn argument_value(key: &str) -> Option<String> {
-    std::env::args()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .find(|args| args[0] == key)
-        .map(|args| args[1].clone())
-}
-
-fn dimension_argument(key: &str, axis: usize) -> f32 {
-    argument_value(key)
-        .and_then(|value| value.parse::<f32>().ok())
-        .filter(|value| value.is_finite())
-        .map(|value| value.clamp(config::MIN_WINDOW_SIZE[axis], config::MAX_WINDOW_SIZE[axis]))
-        .unwrap_or(config::WINDOW_SIZE[axis])
+pub(crate) fn argument(name: &str) -> Option<String> {
+    let args: Vec<_> = std::env::args().collect();
+    args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone())
 }

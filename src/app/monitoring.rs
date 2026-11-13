@@ -21,20 +21,20 @@ impl ConsoleApp {
             let overruns = audio.map(AudioEngine::overruns).unwrap_or(0);
             egui::Grid::new("connection-metrics").num_columns(2).spacing([24.0,8.0]).show(ui, |ui| {
                 ui.label("Захват"); ui.label(if running { self.settings.mode.as_ref().map(ToString::to_string).unwrap_or_else(|| "—".into()) } else { "—".into() }); ui.end_row();
-                ui.label("Получено кадров/с"); ui.label(if running {format!("{:.1}",self.fps)} else {"—".into()}); ui.end_row();
+                ui.label("Кадры, принятые интерфейсом/с"); ui.label(if running {format!("{:.1}",self.fps)} else {"—".into()}); ui.end_row();
                 ui.label("Память истории видео"); ui.label(format!("{:.1} МБ",self.history.bytes() as f64/1_048_576.0)); ui.end_row();
                 ui.label("Пропущенные кадры"); ui.label(format!("{dropped}")); ui.end_row();
                 ui.label("Аудиобуфер: паузы / переполнения"); ui.label(if audio.is_some() {format!("{underruns} / {overruns}")} else {"Аудио не подключено".into()}); ui.end_row();
                 ui.label("Коррекция синхронизации"); ui.label(format!("{:+} мс",self.settings.sync_ms)); ui.end_row();
             });
             ui.add_space(12.0);
-            plot(ui, "Частота входящих кадров · FPS", &self.monitor, false, self.settings.mode.as_ref().map(nominal_fps).unwrap_or(60) as f32, running);
+            plot(ui, "Кадры интерфейса · FPS", &self.monitor, false, self.settings.mode.as_ref().map(nominal_fps).unwrap_or(60) as f32, running);
             ui.add_space(10.0);
             plot(ui, "Уровень выходного звука · %", &self.monitor, true, 100.0, audio.is_some());
             ui.add_space(8.0);
             theme::subtitle(ui, "Последние 60 секунд · шаг 0,5 с. FPS обновляется раз в секунду. Уровень звука — пик последнего аудиобуфера.");
-            theme::subtitle(ui, "Это показатели приложения. Полная задержка HDMI-карты здесь не измеряется.");
-            if ui.add_enabled(!running && !self.opening, egui::Button::new("Обновить устройства")).clicked() { self.refresh(ctx.clone()); }
+            theme::subtitle(ui, "FPS показывает кадры, принятые интерфейсом, а не частоту сигнала HDMI. Полная задержка карты здесь не измеряется.");
+            if ui.add_enabled(!running && !self.opening && !self.refreshing, egui::Button::new("Обновить устройства")).clicked() { self.refresh(ctx.clone()); }
         });
     }
 }

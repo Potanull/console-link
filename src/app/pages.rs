@@ -338,9 +338,8 @@ impl ConsoleApp {
             .unwrap_or(0);
         self.dirty = Some(Instant::now());
         if self.active.is_some() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                "{} - Console Link",
-                self.settings.game
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(playback::game_window_title(
+                self.game_name(),
             )));
         }
     }

@@ -1,55 +1,120 @@
 use super::*;
 
+fn spawn_device_discovery(
+    video: impl FnOnce() -> Result<Vec<VideoDevice>, String> + Send + 'static,
+    audio: Option<
+        impl FnOnce() -> (
+            Result<Vec<AudioDeviceInfo>, String>,
+            Result<Vec<AudioDeviceInfo>, String>,
+        ) + Send
+        + 'static,
+    >,
+    send: impl Fn(Event) + Clone + Send + 'static,
+) {
+    let send_video = send.clone();
+    std::thread::spawn(move || send_video(Event::VideoDevices(video())));
+    if let Some(audio) = audio {
+        std::thread::spawn(move || {
+            let (inputs, outputs) = audio();
+            send(Event::AudioDevices { inputs, outputs });
+        });
+    }
+}
+
+impl Devices {
+    fn update_video(&mut self, result: Result<Vec<VideoDevice>, String>) {
+        self.video = result.unwrap_or_else(|error| {
+            self.warnings.push(error);
+            Vec::new()
+        });
+    }
+
+    fn update_audio(
+        &mut self,
+        inputs: Result<Vec<AudioDeviceInfo>, String>,
+        outputs: Result<Vec<AudioDeviceInfo>, String>,
+    ) {
+        self.inputs = inputs.unwrap_or_else(|error| {
+            self.warnings.push(error);
+            Vec::new()
+        });
+        self.outputs = outputs.unwrap_or_else(|error| {
+            self.warnings.push(error);
+            Vec::new()
+        });
+    }
+
+    fn video_ready(&self, settings: &Settings) -> bool {
+        self.video.iter().any(|device| {
+            device.id == settings.video_id
+                && settings
+                    .mode
+                    .as_ref()
+                    .is_some_and(|mode| device.modes.contains(mode))
+        })
+    }
+
+    fn audio_ready(&self, settings: &Settings) -> bool {
+        (settings.audio_input_id.is_empty() && settings.audio_output_id.is_empty())
+            || (!settings.audio_input_id.is_empty()
+                && !settings.audio_output_id.is_empty()
+                && self
+                    .inputs
+                    .iter()
+                    .any(|device| device.id == settings.audio_input_id)
+                && self
+                    .outputs
+                    .iter()
+                    .any(|device| device.id == settings.audio_output_id))
+    }
+
+    fn ready(&self, settings: &Settings, video_pending: bool, audio_pending: bool) -> bool {
+        let without_audio =
+            settings.audio_input_id.is_empty() && settings.audio_output_id.is_empty();
+        !video_pending
+            && (!audio_pending || without_audio)
+            && self.video_ready(settings)
+            && self.audio_ready(settings)
+    }
+}
+
 impl ConsoleApp {
     pub(super) fn refresh(&mut self, ctx: egui::Context) {
         if self.refreshing {
             return;
         }
-        self.refreshing = true;
-        let tx = self.tx.clone();
-        let diagnostics = self.connection_diagnostics.clone();
         let video_only_diagnostic = self.diagnostic_card.is_some()
             && argument_value("--diagnose-audio-input").is_none()
             && argument_value("--diagnose-audio-output").is_none();
-        std::thread::spawn(move || {
-            if let Some(trace) = &diagnostics {
-                trace.record("enumeration_start", "video discovery");
-            }
-            let mut devices = Devices {
-                video: vec![],
-                inputs: vec![],
-                outputs: vec![],
-                warnings: vec![],
-            };
-            match capture::enumerate() {
-                Ok(video) => devices.video = video,
-                Err(e) => devices.warnings.push(e),
-            }
-            if let Some(trace) = &diagnostics {
-                trace.record(
-                    "enumeration_video_ready",
-                    &format!("count={}", devices.video.len()),
-                );
-            }
-            if !video_only_diagnostic {
+        let discover_audio = !video_only_diagnostic && !self.refreshing_audio;
+        self.refreshing = true;
+        self.refreshing_audio |= discover_audio;
+        self.devices.warnings.clear();
+        let tx = self.tx.clone();
+        let diagnostics = self.connection_diagnostics.clone();
+        if let Some(trace) = &diagnostics {
+            trace.record("enumeration_start", "independent device discovery");
+        }
+        spawn_device_discovery(
+            capture::enumerate,
+            discover_audio.then_some(|| (audio::input_devices(), audio::output_devices())),
+            move |event| {
                 if let Some(trace) = &diagnostics {
-                    trace.record("enumeration_audio_start", "audio discovery");
+                    match &event {
+                        Event::VideoDevices(result) => trace.record(
+                            "enumeration_video_ready",
+                            &format!("count={}", result.as_ref().map_or(0, Vec::len)),
+                        ),
+                        Event::AudioDevices { .. } => {
+                            trace.record("enumeration_audio_ready", "audio discovery complete")
+                        }
+                        _ => unreachable!("discovery emits only device results"),
+                    }
                 }
-                match audio::input_devices() {
-                    Ok(inputs) => devices.inputs = inputs,
-                    Err(e) => devices.warnings.push(e),
-                }
-                match audio::output_devices() {
-                    Ok(outputs) => devices.outputs = outputs,
-                    Err(e) => devices.warnings.push(e),
-                }
-            }
-            if let Some(trace) = &diagnostics {
-                trace.record("enumeration_complete", "device discovery complete");
-            }
-            let _ = tx.send(Event::Devices(Ok(devices)));
-            ctx.request_repaint();
-        });
+                let _ = tx.send(event);
+                ctx.request_repaint();
+            },
+        );
     }
 
     pub(super) fn refresh_capture_mode(&mut self) {
@@ -77,6 +142,14 @@ impl ConsoleApp {
     pub(super) fn connect(&mut self, ctx: egui::Context) {
         if let Some(trace) = &self.connection_diagnostics {
             trace.record("connect_requested", "production connection handler entered");
+        }
+        if self.refreshing
+            || (self.refreshing_audio
+                && (!self.settings.audio_input_id.is_empty()
+                    || !self.settings.audio_output_id.is_empty()))
+        {
+            self.error = Some("Дождись обнаружения выбранных устройств.".into());
+            return;
         }
         self.refresh_capture_mode();
         let Some(device) = self
@@ -261,53 +334,27 @@ impl ConsoleApp {
 
     pub(super) fn events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
+            let discovering = self.refreshing || self.refreshing_audio;
             match event {
-                Event::Devices(result) => {
+                Event::VideoDevices(result) => {
                     self.refreshing = false;
-                    match result {
-                        Ok(devices) => {
-                            self.devices = devices;
-                            self.refresh_capture_mode();
-                            if !self.settings.video_id.is_empty()
-                                && !self
-                                    .devices
-                                    .video
-                                    .iter()
-                                    .any(|d| d.id == self.settings.video_id)
-                            {
-                                self.notice = Some(
-                                    "Сохраненная карта не найдена. Подключи ее и обнови список."
-                                        .into(),
-                                );
-                            }
-                        }
-                        Err(e) => self.error = Some(e),
+                    self.devices.update_video(result);
+                    self.refresh_capture_mode();
+                    if !self.settings.video_id.is_empty()
+                        && !self
+                            .devices
+                            .video
+                            .iter()
+                            .any(|d| d.id == self.settings.video_id)
+                    {
+                        self.notice = Some(
+                            "Сохраненная карта не найдена. Подключи ее и обнови список.".into(),
+                        );
                     }
-                    if self.retry_refresh && self.reconnect.active() {
-                        self.retry_refresh = false;
-                        let video_ready = self.devices.video.iter().any(|d| {
-                            d.id == self.settings.video_id
-                                && self
-                                    .settings
-                                    .mode
-                                    .as_ref()
-                                    .is_some_and(|m| d.modes.contains(m))
-                        });
-                        let audio_ready = self.settings.audio_input_id.is_empty()
-                            || (self
-                                .devices
-                                .inputs
-                                .iter()
-                                .any(|d| d.id == self.settings.audio_input_id)
-                                && self
-                                    .devices
-                                    .outputs
-                                    .iter()
-                                    .any(|d| d.id == self.settings.audio_output_id));
-                        if video_ready && audio_ready {
-                            self.connect(ctx.clone());
-                        }
-                    }
+                }
+                Event::AudioDevices { inputs, outputs } => {
+                    self.refreshing_audio = false;
+                    self.devices.update_audio(inputs, outputs);
                 }
                 Event::Started(generation, result) => {
                     if generation != self.generation || self.cancelled.load(Ordering::Acquire) {
@@ -377,6 +424,24 @@ impl ConsoleApp {
                         Err(e) => self.error = Some(format!("Не удалось сохранить скриншот: {e}")),
                     }
                 }
+            }
+            if discovering
+                && !self.refreshing
+                && !self.refreshing_audio
+                && let Some(trace) = &self.connection_diagnostics
+            {
+                trace.record("enumeration_complete", "device discovery complete");
+            }
+        }
+        if self.retry_refresh && self.reconnect.active() {
+            if self
+                .devices
+                .ready(&self.settings, self.refreshing, self.refreshing_audio)
+            {
+                self.retry_refresh = false;
+                self.connect(ctx.clone());
+            } else if !self.refreshing && !self.refreshing_audio {
+                self.retry_refresh = false;
             }
         }
         let delay_ns = (-self.settings.sync_ms.min(0)) as u64 * 1_000_000;
@@ -463,7 +528,13 @@ impl ConsoleApp {
                     .into(),
             );
         }
-        if self.reconnect.due(Instant::now()) && !self.opening && !self.refreshing {
+        if self.reconnect.due(Instant::now())
+            && !self.opening
+            && !self.refreshing
+            && (!self.refreshing_audio
+                || (self.settings.audio_input_id.is_empty()
+                    && self.settings.audio_output_id.is_empty()))
+        {
             self.reconnect.failed(Instant::now());
             self.retry_refresh = true;
             self.refresh(ctx.clone());
@@ -647,27 +718,9 @@ impl ConsoleApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let stop = running || self.opening || self.reconnect.active();
-                    let valid_video = self.devices.video.iter().any(|d| {
-                        d.id == self.settings.video_id
-                            && self
-                                .settings
-                                .mode
-                                .as_ref()
-                                .is_some_and(|m| d.modes.contains(m))
-                    });
-                    let valid_audio = (self.settings.audio_input_id.is_empty()
-                        && self.settings.audio_output_id.is_empty())
-                        || (self
-                            .devices
-                            .inputs
-                            .iter()
-                            .any(|d| d.id == self.settings.audio_input_id)
-                            && self
-                                .devices
-                                .outputs
-                                .iter()
-                                .any(|d| d.id == self.settings.audio_output_id));
-                    let can_connect = valid_video && valid_audio && !self.refreshing;
+                    let can_connect =
+                        self.devices
+                            .ready(&self.settings, self.refreshing, self.refreshing_audio);
                     ui.add_enabled_ui(stop || can_connect, |ui| {
                         if theme::action(
                             ui,
@@ -724,9 +777,16 @@ impl ConsoleApp {
                                 } else {
                                     if self.error.is_some() {
                                         "Подключение не удалось"
-                                    } else if !valid_video {
+                                    } else if self.refreshing {
+                                        "Ищем видеоустройства…"
+                                    } else if !self.devices.video_ready(&self.settings) {
                                         "Выбери карту, чтобы начать"
-                                    } else if !valid_audio {
+                                    } else if self.refreshing_audio
+                                        && (!self.settings.audio_input_id.is_empty()
+                                            || !self.settings.audio_output_id.is_empty())
+                                    {
+                                        "Ищем аудиоустройства…"
+                                    } else if !self.devices.audio_ready(&self.settings) {
                                         "Выбери аудиовход и выход"
                                     } else {
                                         "Все готово к подключению"
@@ -764,6 +824,15 @@ impl ConsoleApp {
                     message(ui, "Не удалось подключиться", error, true);
                     ui.add_space(12.0);
                 }
+                if !running && !self.opening && self.refreshing_audio
+                    && (!self.settings.audio_input_id.is_empty() || !self.settings.audio_output_id.is_empty())
+                {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Ищем выбранные аудиоустройства. Подключение со звуком станет доступно после проверки.");
+                    });
+                    ui.add_space(12.0);
+                }
                 egui::ScrollArea::vertical()
                     .id_salt(("menu-page", self.page as u8))
                     .scroll_bar_visibility(if compact {
@@ -793,5 +862,111 @@ impl ConsoleApp {
         if before != self.settings {
             self.dirty = Some(Instant::now());
         }
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    fn video() -> VideoDevice {
+        VideoDevice {
+            id: "synthetic-video".into(),
+            name: "Synthetic card".into(),
+            modes: vec![capture::VideoMode {
+                width: 1920,
+                height: 1080,
+                fps_num: 50,
+                fps_den: 1,
+            }],
+        }
+    }
+
+    fn devices() -> Devices {
+        Devices {
+            video: vec![video()],
+            inputs: vec![],
+            outputs: vec![],
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn blocked_audio_discovery_does_not_delay_video() {
+        let (audio_entered_tx, audio_entered_rx) = std::sync::mpsc::channel();
+        let (release_audio_tx, release_audio_rx) = std::sync::mpsc::channel();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        spawn_device_discovery(
+            || Ok(vec![video()]),
+            Some(move || {
+                audio_entered_tx.send(()).unwrap();
+                release_audio_rx.recv().unwrap();
+                (Err("Synthetic input failure".into()), Ok(Vec::new()))
+            }),
+            move |event| tx.send(event).unwrap(),
+        );
+        audio_entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let event = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(event, Event::VideoDevices(Ok(video)) if video.len() == 1));
+        release_audio_tx.send(()).unwrap();
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Event::AudioDevices {
+                inputs: Err(_),
+                outputs: Ok(_)
+            }
+        ));
+    }
+
+    #[test]
+    fn failed_discovery_preserves_other_results_and_warnings() {
+        let mut devices = devices();
+        devices.update_audio(
+            Err("Synthetic input failure".into()),
+            Ok(vec![AudioDeviceInfo {
+                id: "synthetic-output".into(),
+                name: "Synthetic output".into(),
+            }]),
+        );
+        assert_eq!(devices.video.len(), 1);
+        assert_eq!(devices.outputs.len(), 1);
+        devices.update_video(Err("Synthetic video failure".into()));
+        assert_eq!(devices.outputs.len(), 1);
+        assert!(devices.video.is_empty());
+        assert_eq!(
+            devices.warnings,
+            ["Synthetic input failure", "Synthetic video failure"]
+        );
+    }
+
+    #[test]
+    fn connection_waits_only_for_its_selected_devices() {
+        let mut devices = devices();
+        let mut settings = Settings {
+            video_id: "synthetic-video".into(),
+            mode: Some(video().modes.remove(0)),
+            ..Settings::default()
+        };
+        assert!(!devices.ready(&settings, true, false));
+        assert!(devices.ready(&settings, false, true));
+        settings.audio_input_id = "synthetic-input".into();
+        settings.audio_output_id = "synthetic-output".into();
+        devices.update_audio(
+            Ok(vec![AudioDeviceInfo {
+                id: settings.audio_input_id.clone(),
+                name: "Synthetic input".into(),
+            }]),
+            Ok(vec![AudioDeviceInfo {
+                id: settings.audio_output_id.clone(),
+                name: "Synthetic output".into(),
+            }]),
+        );
+        assert!(!devices.ready(&settings, false, true));
+        assert!(devices.ready(&settings, false, false));
+        settings.audio_output_id.clear();
+        assert!(!devices.ready(&settings, false, false));
+        assert_eq!(settings.video_id, "synthetic-video");
     }
 }

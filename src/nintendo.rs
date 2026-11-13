@@ -86,6 +86,48 @@ fn find_helper(
         })
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn resolve_macos_node(
+    path: Option<&std::ffi::OsStr>,
+    executable: impl Fn(&std::path::Path) -> bool,
+) -> std::path::PathBuf {
+    path.into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|directory| directory.join("node"))
+        .chain(["/opt/homebrew/bin/node", "/usr/local/bin/node"].map(std::path::PathBuf::from))
+        .find(|candidate| executable(candidate))
+        .unwrap_or_else(|| "node".into())
+}
+
+#[cfg(target_os = "macos")]
+fn executable_file(candidate: &std::path::Path) -> bool {
+    use std::{
+        ffi::{CString, c_char, c_int},
+        os::unix::ffi::OsStrExt,
+    };
+    unsafe extern "C" {
+        fn access(path: *const c_char, mode: c_int) -> c_int;
+    }
+    // Check this caller's execute access, including ACLs, not another user's mode bit.
+    candidate.is_file()
+        && CString::new(candidate.as_os_str().as_bytes()).is_ok_and(|path| {
+            // SAFETY: CString supplies a valid NUL-terminated path for this call; 1 is X_OK.
+            unsafe { access(path.as_ptr(), 1) == 0 }
+        })
+}
+
+fn node_program() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        // Finder's minimal PATH omits standard Homebrew and Node installers.
+        resolve_macos_node(std::env::var_os("PATH").as_deref(), executable_file)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "node".into()
+    }
+}
+
 /// Run only on a worker thread. No shell, credential arguments, or raw SDK error logging.
 pub fn fetch() -> Result<Vec<Friend>, String> {
     use std::{
@@ -100,8 +142,9 @@ pub fn fetch() -> Result<Vec<Friend>, String> {
     let executable = std::env::current_exe().map_err(|_| FETCH_ERROR)?;
     let base = find_helper(&executable, &local)
         .ok_or("Локальный nxapi не найден. Проверь папку помощника Nintendo и сохранённый вход.")?;
-    let mut command = Command::new("node");
+    let mut command = Command::new(node_program());
     command
+        .env("CONSOLE_LINK_VERSION", env!("CARGO_PKG_VERSION"))
         .args([
             "-e",
             include_str!("../scripts/nintendo-presence.cjs"),
@@ -155,6 +198,64 @@ pub fn fetch() -> Result<Vec<Friend>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn macos_node_resolver_preserves_path_before_installer_fallbacks() {
+        use std::path::Path;
+        let custom_path = std::env::join_paths(["/custom/bin", "/usr/bin", "/bin"]).unwrap();
+        let finder_path = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let chosen = resolve_macos_node(Some(&custom_path), |candidate| {
+            [
+                Path::new("/custom/bin/node"),
+                Path::new("/opt/homebrew/bin/node"),
+            ]
+            .contains(&candidate)
+        });
+        assert_eq!(chosen, Path::new("/custom/bin/node"));
+        for available in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] {
+            assert_eq!(
+                resolve_macos_node(Some(&finder_path), |candidate| candidate
+                    == Path::new(available)),
+                Path::new(available)
+            );
+        }
+        assert_eq!(
+            resolve_macos_node(Some(&finder_path), |candidate| {
+                [
+                    Path::new("/opt/homebrew/bin/node"),
+                    Path::new("/usr/local/bin/node"),
+                ]
+                .contains(&candidate)
+            }),
+            Path::new("/opt/homebrew/bin/node")
+        );
+        assert_eq!(resolve_macos_node(None, |_| false), Path::new("node"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_node_candidates_require_caller_execute_access_and_regular_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "console-link-node-permission-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let node = root.join("node");
+        std::fs::write(&node, "").unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o610)).unwrap();
+        assert!(
+            !executable_file(&node),
+            "Owner lacks execute access even when the group has it"
+        );
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(executable_file(&node));
+        assert!(
+            !executable_file(&root),
+            "An executable directory is not Node"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn cover_urls_are_public_nintendo_https_only() {
         assert!(valid_cover(

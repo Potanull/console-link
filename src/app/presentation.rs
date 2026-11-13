@@ -28,13 +28,9 @@ impl ConsoleApp {
                 self.playback.overlay_open = true;
             }
             self.native_mode = None;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-                if self.game_name().is_empty() {
-                    "Console Link - Game".into()
-                } else {
-                    format!("{} - Console Link", self.game_name())
-                },
-            ));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(playback::game_window_title(
+                self.game_name(),
+            )));
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
                 480.0, 270.0,
             )));

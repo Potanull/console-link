@@ -5,6 +5,8 @@
 
 use std::ops::Range;
 
+use super::theme;
+
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
@@ -604,6 +606,8 @@ impl Render for TextField {
             .flex()
             .key_context("ConsoleTextField")
             .track_focus(&self.focus_handle(cx))
+            .tab_stop(true)
+            .focus(|s| s.border_color(rgb(theme::TEXT)))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -626,9 +630,9 @@ impl Render for TextField {
             .min_w(px(0.))
             .rounded_md()
             .border_1()
-            .border_color(rgb(0x101010))
-            .bg(rgb(0x101010))
-            .text_color(rgb(0xededed))
+            .border_color(rgb(theme::CONTROL_BORDER))
+            .bg(rgb(theme::BACKGROUND))
+            .text_color(rgb(theme::TEXT))
             .line_height(px(22.))
             .text_size(px(14.))
             .child(
@@ -736,6 +740,355 @@ fn replace_limited(
     inserted
 }
 
+/// GPUI SVGs need an explicit paint color; inherited text color does not paint them.
+pub fn icon(path: &'static str, size: f32, color: u32) -> gpui::Svg {
+    gpui::svg()
+        .path(path)
+        .size(px(size))
+        .flex_shrink_0()
+        .text_color(rgb(color))
+}
+
+/// Shared selector: its options float above the page instead of changing card height.
+/// Explicit widths keep GPUI's intrinsic text measurement out of the flex shrink path.
+pub fn select(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    open: bool,
+    options: Vec<(String, String, bool)>,
+    on_toggle: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    on_select: impl Fn(String, &mut Window, &mut App) + 'static,
+    on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    Select {
+        id: id.into(),
+        label: label.into(),
+        open,
+        options,
+        on_toggle: std::rc::Rc::new(on_toggle),
+        on_select: std::rc::Rc::new(on_select),
+        on_dismiss: std::rc::Rc::new(on_dismiss),
+    }
+    .into_any_element()
+}
+
+type SelectToggle = std::rc::Rc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>;
+type SelectChoice = std::rc::Rc<dyn Fn(String, &mut Window, &mut App)>;
+type SelectDismiss = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
+#[derive(gpui::IntoElement)]
+struct Select {
+    id: ElementId,
+    label: SharedString,
+    open: bool,
+    options: Vec<(String, String, bool)>,
+    on_toggle: SelectToggle,
+    on_select: SelectChoice,
+    on_dismiss: SelectDismiss,
+}
+
+struct SelectState {
+    trigger: FocusHandle,
+    options: Vec<(String, FocusHandle)>,
+    scroll: gpui::ScrollHandle,
+}
+
+impl RenderOnce for Select {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        use std::{cell::Cell, rc::Rc};
+        let state =
+            window.use_keyed_state((self.id.clone(), "select-state"), cx, |_, cx| SelectState {
+                trigger: cx.focus_handle(),
+                options: Vec::new(),
+                scroll: gpui::ScrollHandle::new(),
+            });
+        // Handles belong to option values, not the deferred tree's global tab order.
+        // Retaining them also keeps focus stable when another UI element rerenders.
+        state.update(cx, |state, cx| {
+            let previous = std::mem::take(&mut state.options);
+            state.options = self
+                .options
+                .iter()
+                .map(|(value, _, _)| {
+                    let focus = previous
+                        .iter()
+                        .find(|(key, _)| key == value)
+                        .map(|(_, focus)| focus.clone())
+                        .unwrap_or_else(|| cx.focus_handle());
+                    (value.clone(), focus)
+                })
+                .collect();
+        });
+        let trigger_focus = state.read(cx).trigger.clone();
+        let option_focus: Rc<Vec<_>> = Rc::new(
+            state
+                .read(cx)
+                .options
+                .iter()
+                .map(|(_, handle)| handle.clone())
+                .collect(),
+        );
+        let scroll = state.read(cx).scroll.clone();
+        let selected_index = self
+            .options
+            .iter()
+            .position(|(_, _, selected)| *selected)
+            .unwrap_or(0);
+        let trigger_bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
+        let open = self.open;
+        let click_toggle = self.on_toggle.clone();
+        let key_toggle = self.on_toggle.clone();
+        let click_trigger = trigger_focus.clone();
+        let click_options = option_focus.clone();
+        let click_scroll = scroll.clone();
+        let key_options = option_focus.clone();
+        let key_scroll = scroll.clone();
+        let key_bounds = trigger_bounds.clone();
+        let dismiss = self.on_dismiss.clone();
+        let escape_focus = trigger_focus.clone();
+        let trigger = div()
+            .id(self.id.clone())
+            .track_focus(&trigger_focus)
+            .tab_stop(true)
+            .w_full()
+            .min_w_0()
+            .min_h(px(42.))
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_3()
+            .py_2()
+            .rounded_lg()
+            .border_1()
+            .border_color(rgb(if open {
+                theme::SECONDARY
+            } else {
+                theme::BORDER
+            }))
+            .bg(rgb(theme::ELEVATED))
+            .text_color(rgb(theme::TEXT))
+            .text_size(px(14.))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme::HOVER)))
+            .focus(|s| s.border_color(rgb(theme::TEXT)))
+            .on_click(move |event, window, cx| {
+                click_toggle(event, window, cx);
+                if !open && let Some(focus) = click_options.get(selected_index) {
+                    click_scroll.scroll_to_item(selected_index);
+                    focus.focus(window);
+                } else {
+                    click_trigger.focus(window);
+                }
+                cx.stop_propagation();
+            })
+            .on_key_down(move |event, window, cx| {
+                let index = match event.keystroke.key.as_str() {
+                    "down" => selected_index,
+                    "up" => {
+                        if open {
+                            selected_index
+                        } else {
+                            key_options.len().saturating_sub(1)
+                        }
+                    }
+                    _ => return,
+                };
+                if !open {
+                    key_toggle(
+                        &gpui::ClickEvent::Keyboard(gpui::KeyboardClickEvent {
+                            button: gpui::KeyboardButton::Enter,
+                            bounds: key_bounds.get(),
+                        }),
+                        window,
+                        cx,
+                    );
+                }
+                if let Some(focus) = key_options.get(index) {
+                    key_scroll.scroll_to_item(index);
+                    focus.focus(window);
+                }
+                cx.stop_propagation();
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .w_full()
+                    .line_height(relative(1.4))
+                    .child(self.label),
+            )
+            .child(icon("ui/chevron-down.svg", 16., theme::SECONDARY));
+        div()
+            .id((self.id.clone(), "selector"))
+            .relative()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .when(open, |root| {
+                root.on_action(move |_: &super::Escape, window, cx| {
+                    dismiss(window, cx);
+                    escape_focus.focus(window);
+                    cx.stop_propagation();
+                })
+            })
+            .child(trigger)
+            .child(
+                gpui::canvas(
+                    move |bounds, window, cx| {
+                        trigger_bounds.set(bounds);
+                        if !open {
+                            return;
+                        }
+                        let viewport = window.viewport_size();
+                        let limit = select_menu_bounds(bounds, viewport, px(280.));
+                        let dismiss = self.on_dismiss.clone();
+                        let mut menu = div()
+                            .id((self.id.clone(), "menu"))
+                            .w(limit.size.width)
+                            .max_h(limit.size.height)
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_1()
+                            .rounded_xl()
+                            .border_1()
+                            .border_color(rgb(theme::BORDER))
+                            .bg(rgb(theme::ELEVATED))
+                            .shadow_lg()
+                            .on_mouse_down_out(move |event, window, cx| {
+                                if !bounds.contains(&event.position) {
+                                    dismiss(window, cx);
+                                }
+                            });
+                        for (index, (value, label, selected)) in
+                            self.options.into_iter().enumerate()
+                        {
+                            let choose = self.on_select.clone();
+                            let clicked_trigger = trigger_focus.clone();
+                            let keyed_trigger = trigger_focus.clone();
+                            let handles = option_focus.clone();
+                            let row_scroll = scroll.clone();
+                            let dismiss = self.on_dismiss.clone();
+                            menu = menu.child(
+                                div()
+                                    .id((self.id.clone(), SharedString::from(value.clone())))
+                                    .track_focus(&option_focus[index])
+                                    .tab_stop(false)
+                                    .w_full()
+                                    .min_w_0()
+                                    .flex_shrink_0()
+                                    .min_h(px(40.))
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(gpui::transparent_black())
+                                    .bg(rgb(if selected {
+                                        theme::HOVER
+                                    } else {
+                                        theme::ELEVATED
+                                    }))
+                                    .hover(|s| s.bg(rgb(theme::HOVER)))
+                                    .focus(|s| s.border_color(rgb(theme::TEXT)))
+                                    .cursor_pointer()
+                                    .text_size(px(14.))
+                                    .line_height(relative(1.4))
+                                    .text_color(rgb(theme::TEXT))
+                                    .on_click(move |_, window, cx| {
+                                        choose(value.clone(), window, cx);
+                                        clicked_trigger.focus(window);
+                                        cx.stop_propagation();
+                                    })
+                                    .on_key_down(move |event, window, cx| {
+                                        let next = match event.keystroke.key.as_str() {
+                                            "down" => Some((index + 1).min(handles.len() - 1)),
+                                            "up" => Some(index.saturating_sub(1)),
+                                            "home" => Some(0),
+                                            "end" => Some(handles.len() - 1),
+                                            "tab" => {
+                                                dismiss(window, cx);
+                                                keyed_trigger.focus(window);
+                                                if event.keystroke.modifiers.shift {
+                                                    window.focus_prev();
+                                                } else {
+                                                    window.focus_next();
+                                                }
+                                                None
+                                            }
+                                            _ => return,
+                                        };
+                                        if let Some(next) = next {
+                                            row_scroll.scroll_to_item(next);
+                                            handles[next].focus(window);
+                                        }
+                                        cx.stop_propagation();
+                                    })
+                                    .child(div().flex_1().min_w_0().w_full().child(label))
+                                    .child(
+                                        div().size(px(18.)).flex_shrink_0().when(selected, |s| {
+                                            s.child(icon("ui/check.svg", 18., theme::TEXT))
+                                        }),
+                                    ),
+                            );
+                        }
+                        let mut menu = menu.into_any_element();
+                        let measured = menu.layout_as_root(
+                            size(
+                                gpui::AvailableSpace::Definite(limit.size.width),
+                                gpui::AvailableSpace::MaxContent,
+                            ),
+                            window,
+                            cx,
+                        );
+                        let placement = select_menu_bounds(bounds, viewport, measured.height);
+                        // defer_draw uses an absolute window offset. No local anchor offset is added.
+                        window.defer_draw(menu, placement.origin, 2);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0()
+                .size_full(),
+            )
+    }
+}
+
+/// The popup tracks the full trigger, including wrapped labels, and uses whichever
+/// vertical side can contain it. Only a viewport narrower than the trigger limits width.
+fn select_menu_bounds(
+    trigger: Bounds<Pixels>,
+    viewport: gpui::Size<Pixels>,
+    natural_height: Pixels,
+) -> Bounds<Pixels> {
+    let margin = px(12.);
+    let gap = px(4.);
+    let width = trigger
+        .size
+        .width
+        .min((viewport.width - margin * 2.).max(px(0.)));
+    let below = (viewport.height - margin - trigger.bottom() - gap).max(px(0.));
+    let above = (trigger.top() - gap - margin).max(px(0.));
+    let down = natural_height <= below || below >= above;
+    let height = natural_height
+        .min(if down { below } else { above })
+        .max(px(0.));
+    let left = trigger
+        .left()
+        .max(margin)
+        .min((viewport.width - margin - width).max(margin));
+    let top = if down {
+        trigger.bottom() + gap
+    } else {
+        trigger.top() - gap - height
+    };
+    Bounds::new(point(left, top), size(width, height))
+}
+
 pub fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -744,23 +1097,55 @@ pub fn button(
 ) -> AnyElement {
     div()
         .id(id.into())
+        .focusable()
+        .tab_stop(true)
         .flex()
+        .min_w_0()
+        .flex_shrink_0()
         .items_center()
         .justify_center()
         .px_4()
-        .py(px(7.))
-        .min_h(px(36.))
-        .rounded_full()
+        .py_2()
+        .min_h(px(40.))
+        .rounded_xl()
         .border_1()
-        .border_color(rgb(if primary { 0xededed } else { 0x303030 }))
-        .bg(rgb(if primary { 0xededed } else { 0x202020 }))
-        .text_color(rgb(if primary { 0x101010 } else { 0xededed }))
+        .border_color(rgb(if primary {
+            theme::ACCENT
+        } else {
+            theme::BORDER
+        }))
+        .bg(rgb(if primary {
+            theme::ACCENT
+        } else {
+            theme::ELEVATED
+        }))
+        .text_color(rgb(if primary {
+            theme::ON_ACCENT
+        } else {
+            theme::TEXT
+        }))
         .text_size(px(14.))
+        .line_height(relative(1.4))
         .font_weight(gpui::FontWeight::MEDIUM)
         .cursor_pointer()
-        .hover(move |s| s.bg(rgb(if primary { 0xd7d7d7 } else { 0x303030 })))
+        .hover(move |s| s.bg(rgb(if primary { 0xd7d7d7 } else { theme::HOVER })))
+        .focus(move |s| {
+            s.border_color(rgb(if primary {
+                theme::ON_ACCENT
+            } else {
+                theme::TEXT
+            }))
+            .bg(rgb(if primary { 0xd7d7d7 } else { theme::HOVER }))
+        })
         .on_click(on_click)
-        .child(label.into())
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .w_full()
+                .text_center()
+                .child(label.into()),
+        )
         .into_any_element()
 }
 
@@ -772,27 +1157,47 @@ pub fn toggle(
 ) -> AnyElement {
     div()
         .id(id.into())
+        .focusable()
+        .tab_stop(true)
         .flex()
         .w_full()
+        .min_w_0()
+        .flex_shrink_0()
         .items_center()
         .justify_between()
-        .gap_3()
+        .gap_4()
+        .min_h(px(40.))
         .py_2()
+        .rounded_md()
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus(|s| s.border_color(rgb(theme::TEXT)))
         .cursor_pointer()
         .text_size(px(14.))
-        .text_color(rgb(0xededed))
-        .child(label.into())
+        .text_color(rgb(theme::TEXT))
+        .child(div().flex_1().min_w_0().child(label.into()))
         .child(
             div()
                 .flex()
+                .flex_shrink_0()
                 .items_center()
-                .w(px(36.))
-                .h(px(21.))
+                .w(px(40.))
+                .h(px(24.))
                 .px(px(3.))
                 .rounded_full()
-                .bg(rgb(if checked { 0x606060 } else { 0x303030 }))
+                .border_1()
+                .border_color(rgb(theme::CONTROL_BORDER))
+                .bg(rgb(if checked {
+                    theme::ACCENT
+                } else {
+                    theme::ELEVATED
+                }))
                 .when(checked, |s| s.justify_end())
-                .child(div().size(px(15.)).rounded_full().bg(rgb(0xffffff))),
+                .child(div().size(px(16.)).rounded_full().bg(rgb(if checked {
+                    theme::ON_ACCENT
+                } else {
+                    theme::SECONDARY
+                }))),
         )
         .on_click(move |_, window, cx| on_change(!checked, window, cx))
         .into_any_element()
@@ -802,13 +1207,28 @@ pub fn row(label: impl Into<SharedString>, value: impl Into<SharedString>) -> An
     div()
         .flex()
         .w_full()
-        .items_center()
+        .min_w_0()
+        .flex_shrink_0()
+        .items_start()
         .justify_between()
-        .gap_3()
+        .gap_4()
         .py_1()
         .text_size(px(13.))
-        .child(div().text_color(rgb(0xa3a3a3)).child(label.into()))
-        .child(div().text_color(rgb(0xededed)).child(value.into()))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(rgb(theme::SECONDARY))
+                .child(label.into()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_right()
+                .text_color(rgb(theme::TEXT))
+                .child(value.into()),
+        )
         .into_any_element()
 }
 
@@ -826,6 +1246,7 @@ pub fn slider(
     let paint_bounds = bounds.clone();
     let callback = Rc::new(on_change);
     let drag_callback = callback.clone();
+    let key_callback = callback.clone();
     let id = id.into();
     let drag_id = id.clone();
     let fraction = if max > min {
@@ -835,9 +1256,30 @@ pub fn slider(
     };
     div()
         .id(id.clone())
+        .focusable()
+        .tab_stop(true)
+        .flex_shrink_0()
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .rounded_md()
+        .focus(|s| s.border_color(rgb(theme::TEXT)))
+        .on_key_down(move |event, window, cx| {
+            let step = (max - min) / 100.;
+            let next = match event.keystroke.key.as_str() {
+                "left" | "down" => Some(value - step),
+                "right" | "up" => Some(value + step),
+                "home" => Some(min),
+                "end" => Some(max),
+                _ => None,
+            };
+            if let Some(next) = next {
+                key_callback(next.clamp(min, max), window, cx);
+                cx.stop_propagation();
+            }
+        })
         .relative()
         .w_full()
-        .h(px(28.))
+        .h(px(32.))
         .cursor_pointer()
         .child(
             gpui::canvas(
@@ -854,30 +1296,32 @@ pub fn slider(
                 .absolute()
                 .left_0()
                 .right_0()
-                .top(px(12.))
-                .h(px(4.))
+                .top(px(13.))
+                .h(px(6.))
                 .rounded_full()
-                .bg(rgb(0x303030)),
+                .bg(rgb(theme::BORDER)),
         )
         .child(
             div()
                 .absolute()
                 .left_0()
-                .top(px(12.))
+                .top(px(13.))
                 .w(relative(fraction))
-                .h(px(4.))
+                .h(px(6.))
                 .rounded_full()
-                .bg(rgb(0xededed)),
+                .bg(rgb(theme::SECONDARY)),
         )
         .child(
             div()
                 .absolute()
                 .left(relative(fraction))
-                .top(px(7.))
-                .ml(-px(7.))
-                .size(px(14.))
+                .top(px(8.))
+                .ml(-px(8.))
+                .size(px(16.))
+                .border_2()
+                .border_color(rgb(theme::SURFACE))
                 .rounded_full()
-                .bg(rgb(0xffffff)),
+                .bg(rgb(theme::TEXT)),
         )
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             if let Some(b) = bounds.get() {
@@ -912,6 +1356,7 @@ pub fn vertical_slider(
     let paint_bounds = bounds.clone();
     let callback = Rc::new(on_change);
     let drag_callback = callback.clone();
+    let key_callback = callback.clone();
     let fraction = if max > min {
         ((value - min) / (max - min)).clamp(0., 1.)
     } else {
@@ -919,6 +1364,27 @@ pub fn vertical_slider(
     };
     div()
         .id(id.clone())
+        .focusable()
+        .tab_stop(true)
+        .flex_shrink_0()
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .rounded_md()
+        .focus(|s| s.border_color(rgb(theme::TEXT)))
+        .on_key_down(move |event, window, cx| {
+            let step = (max - min) / 100.;
+            let next = match event.keystroke.key.as_str() {
+                "left" | "down" => Some(value - step),
+                "right" | "up" => Some(value + step),
+                "home" => Some(min),
+                "end" => Some(max),
+                _ => None,
+            };
+            if let Some(next) = next {
+                key_callback(next.clamp(min, max), window, cx);
+                cx.stop_propagation();
+            }
+        })
         .relative()
         .w_full()
         .h(px(112.))
@@ -1008,6 +1474,42 @@ fn slider_value(x: Pixels, bounds: Bounds<Pixels>, min: f32, max: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn select_popup_matches_trigger_and_follows_wrapped_height() {
+        let viewport = size(px(1200.), px(900.));
+        let trigger = Bounds::new(point(px(215.), px(138.)), size(px(736.), px(42.)));
+        let popup = select_menu_bounds(trigger, viewport, px(230.));
+        assert_eq!(
+            popup,
+            Bounds::new(point(px(215.), px(184.)), size(px(736.), px(230.)))
+        );
+        let wrapped = Bounds::new(trigger.origin, size(px(736.), px(57.)));
+        assert_eq!(
+            select_menu_bounds(wrapped, viewport, px(230.)).top(),
+            px(199.)
+        );
+    }
+
+    #[test]
+    fn select_popup_flips_above_and_constrains_narrow_viewports() {
+        let trigger = Bounds::new(point(px(215.), px(820.)), size(px(736.), px(42.)));
+        let popup = select_menu_bounds(trigger, size(px(1200.), px(900.)), px(230.));
+        assert_eq!(
+            popup,
+            Bounds::new(point(px(215.), px(586.)), size(px(736.), px(230.)))
+        );
+        let narrow = select_menu_bounds(trigger, size(px(600.), px(900.)), px(230.));
+        assert_eq!(narrow.left(), px(12.));
+        assert_eq!(narrow.size.width, px(576.));
+        let short = select_menu_bounds(
+            Bounds::new(point(px(20.), px(220.)), size(px(300.), px(42.))),
+            size(px(600.), px(400.)),
+            px(280.),
+        );
+        assert_eq!(short.top(), px(12.));
+        assert_eq!(short.size.height, px(204.));
+    }
 
     #[test]
     fn utf16_offsets_never_split_surrogates_or_utf8() {

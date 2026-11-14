@@ -1,4 +1,4 @@
-use super::{Desktop, Page, widgets};
+use super::{Desktop, Page, theme, widgets};
 use console_link::{
     color::{self, ColorPreset, ColorSettings},
     discord::auth::AuthStatus,
@@ -16,6 +16,11 @@ pub(crate) enum Selection {
     AudioInput,
     AudioOutput,
     Resolution,
+    Equalizer,
+    ColorPreset,
+    Upscale,
+    FrameRate,
+    NintendoProfile,
 }
 
 const EQ_FACTORY: [(&str, [f32; 10]); 5] = [
@@ -41,6 +46,42 @@ impl Desktop {
         }
     }
 
+    fn select_box(
+        &self,
+        which: Selection,
+        id: &'static str,
+        selected: String,
+        choices: Vec<(String, String, bool)>,
+        cx: &Context<Self>,
+        change: impl Fn(&mut Self, String, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let selected_entity = cx.entity().downgrade();
+        let dismissed_entity = cx.entity().downgrade();
+        widgets::select(
+            id,
+            selected,
+            self.selection == Some(which),
+            choices,
+            cx.listener(move |this, _, _, cx| {
+                this.selection = (this.selection != Some(which)).then_some(which);
+                cx.notify();
+            }),
+            move |value, window, app| {
+                let _ = selected_entity.update(app, |this, cx| {
+                    this.selection = None;
+                    change(this, value, window, cx);
+                    cx.notify();
+                });
+            },
+            move |_, app| {
+                let _ = dismissed_entity.update(app, |this, cx| {
+                    this.selection = None;
+                    cx.notify();
+                });
+            },
+        )
+    }
+
     fn device_picker(
         &self,
         which: Selection,
@@ -48,80 +89,46 @@ impl Desktop {
         cx: &Context<Self>,
     ) -> AnyElement {
         let locked = self.runtime.active() || self.runtime.opening;
-        let selected = match which {
-            Selection::Video => self
-                .runtime
-                .devices
-                .video
-                .iter()
-                .find(|d| d.id == self.runtime.settings.video_id)
-                .map(|d| d.name.clone()),
-            Selection::AudioInput => self
-                .runtime
-                .devices
-                .inputs
-                .iter()
-                .find(|d| d.id == self.runtime.settings.audio_input_id)
-                .map(|d| d.name.clone()),
-            Selection::AudioOutput => self
-                .runtime
-                .devices
-                .outputs
-                .iter()
-                .find(|d| d.id == self.runtime.settings.audio_output_id)
-                .map(|d| d.name.clone()),
-            Selection::Resolution => self.runtime.settings.mode.as_ref().map(resolution_label),
-        }
-        .unwrap_or_else(|| "Не выбран".into());
-        let id = match which {
-            Selection::Video => "video-picker",
-            Selection::AudioInput => "input-picker",
-            Selection::AudioOutput => "output-picker",
-            Selection::Resolution => "mode-picker",
-        };
-        let mut content = column().gap_2().child(caption(label));
-        if locked {
-            content = content.child(text(selected));
-        } else {
-            content = content.child(widgets::button(
-                id,
-                selected,
-                false,
-                cx.listener(move |this, _, _, cx| {
-                    this.selection = if this.selection == Some(which) {
-                        None
-                    } else {
-                        Some(which)
-                    };
-                    cx.notify();
-                }),
-            ));
-        }
-        if self.selection == Some(which) && !locked {
-            let mut choices: Vec<(String, String)> = match which {
-                Selection::Video => self
-                    .runtime
+        let (id, selected_key, mut choices): (_, _, Vec<(String, String)>) = match which {
+            Selection::Video => (
+                "video-picker",
+                self.runtime.settings.video_id.clone(),
+                self.runtime
                     .devices
                     .video
                     .iter()
                     .map(|d| (d.id.clone(), d.name.clone()))
                     .collect(),
-                Selection::AudioInput => self
-                    .runtime
+            ),
+            Selection::AudioInput => (
+                "input-picker",
+                self.runtime.settings.audio_input_id.clone(),
+                self.runtime
                     .devices
                     .inputs
                     .iter()
                     .map(|d| (d.id.clone(), d.name.clone()))
                     .collect(),
-                Selection::AudioOutput => self
-                    .runtime
+            ),
+            Selection::AudioOutput => (
+                "output-picker",
+                self.runtime.settings.audio_output_id.clone(),
+                self.runtime
                     .devices
                     .outputs
                     .iter()
                     .map(|d| (d.id.clone(), d.name.clone()))
                     .collect(),
-                Selection::Resolution => self
-                    .runtime
+            ),
+            Selection::Resolution => (
+                "mode-picker",
+                self.runtime
+                    .settings
+                    .mode
+                    .as_ref()
+                    .map(|m| format!("{}:{}", m.width, m.height))
+                    .unwrap_or_default(),
+                self.runtime
                     .devices
                     .video
                     .iter()
@@ -135,56 +142,60 @@ impl Desktop {
                             .collect()
                     })
                     .unwrap_or_default(),
-            };
-            if which != Selection::Resolution {
-                choices.insert(0, (String::new(), "Не выбран".into()));
-            }
-            let mut list = column()
-                .id((id, usize::MAX))
-                .gap_1()
-                .max_h(px(220.))
-                .overflow_y_scroll()
-                .p_2()
-                .rounded_lg()
-                .bg(rgb(0x101010));
-            for (i, (value, name)) in choices.into_iter().enumerate() {
-                list = list.child(widgets::button(
-                    (id, i),
-                    name,
-                    false,
-                    cx.listener(move |this, _, _, cx| {
-                        match which {
-                            Selection::Video => {
-                                this.runtime.settings.video_id = value.clone();
-                                this.runtime.settings.mode = None;
-                            }
-                            Selection::AudioInput => {
-                                this.runtime.settings.audio_input_id = value.clone()
-                            }
-                            Selection::AudioOutput => {
-                                this.runtime.settings.audio_output_id = value.clone()
-                            }
-                            Selection::Resolution => {
-                                if let Some((width, height)) =
-                                    value.split_once(':').and_then(|(width, height)| {
-                                        Some((width.parse().ok()?, height.parse().ok()?))
-                                    })
-                                {
-                                    this.runtime.select_resolution(width, height);
-                                }
-                            }
-                        }
-                        this.selection = None;
-                        if which != Selection::Resolution {
-                            this.runtime.changed();
-                        }
-                        cx.notify();
-                    }),
-                ));
-            }
-            content = content.child(list);
+            ),
+            _ => unreachable!("device_picker only accepts device or resolution selections"),
+        };
+        if which != Selection::Resolution {
+            choices.insert(0, (String::new(), "Не выбран".into()));
         }
-        content.into_any_element()
+        let selected = choices
+            .iter()
+            .find(|(key, _)| *key == selected_key)
+            .map(|(_, label)| label.clone())
+            .unwrap_or_else(|| "Не выбран".into());
+        let control = if locked {
+            text(selected)
+        } else {
+            self.select_box(
+                which,
+                id,
+                selected,
+                choices
+                    .into_iter()
+                    .map(|(key, label)| {
+                        let selected = key == selected_key;
+                        (key, label, selected)
+                    })
+                    .collect(),
+                cx,
+                move |this, value, _, _| {
+                    match which {
+                        Selection::Video => {
+                            this.runtime.settings.video_id = value;
+                            this.runtime.settings.mode = None;
+                        }
+                        Selection::AudioInput => this.runtime.settings.audio_input_id = value,
+                        Selection::AudioOutput => this.runtime.settings.audio_output_id = value,
+                        Selection::Resolution => {
+                            if let Some((width, height)) =
+                                value.split_once(':').and_then(|(width, height)| {
+                                    Some((width.parse().ok()?, height.parse().ok()?))
+                                })
+                            {
+                                this.runtime.select_resolution(width, height);
+                            }
+                        }
+                        _ => unreachable!(
+                            "device_picker only accepts device or resolution selections"
+                        ),
+                    }
+                    if which != Selection::Resolution {
+                        this.runtime.changed();
+                    }
+                },
+            )
+        };
+        setting_control(label, control)
     }
 
     fn session_page(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -196,14 +207,36 @@ impl Desktop {
             .map(resolution_label)
             .unwrap_or_else(|| "1920 × 1080 · автоматически".into());
         let mut source = card(
-            "Подключение консоли",
-            "Подключи HDMI от консоли к карте захвата, затем карту к компьютеру.",
+            if self.runtime.active() {
+                "Консоль подключена"
+            } else {
+                "Подключить консоль"
+            },
+            "Подключи консоль к HDMI-входу карты захвата, а карту к компьютеру.",
         )
         .child(self.device_picker(Selection::Video, "Карта захвата", cx))
-        .child(widgets::row("Разрешение", mode))
-        .child(hint(
-            "По умолчанию выбираем Full HD и ближайшую поддерживаемую частоту до 60 FPS.",
-        ));
+        .child(self.device_picker(Selection::AudioInput, "Аудиовход карты", cx))
+        .child(self.device_picker(Selection::AudioOutput, "Выход звука", cx))
+        .child(hint(if self.runtime.active() {
+            "Чтобы сменить устройства, заверши сеанс."
+        } else {
+            "Для игры без звука выбери «Не выбран» в обоих полях звука."
+        }))
+        .child(
+            column()
+                .w_full()
+                .gap_1()
+                .py_2()
+                .child(widgets::row("Разрешение", mode))
+                .child(widgets::row(
+                    "Целевая частота",
+                    format!(
+                        "{} FPS",
+                        self.runtime.settings.capture_preferences.preferred_fps
+                    ),
+                ))
+                .child(hint("Режим захвата можно изменить в настройках.")),
+        );
         if self.runtime.opening {
             source = source
                 .child(text("Подключаем консоль…"))
@@ -231,12 +264,14 @@ impl Desktop {
             } else {
                 source = source.child(hint(if self.runtime.refreshing {
                     "Ищем карты захвата…"
+                } else if self.runtime.settings.video_id.is_empty() {
+                    "Выбери карту захвата. Если ее нет в списке, проверь USB-подключение и обнови устройства."
                 } else {
-                    "Выбери карту и доступный режим. Для звука нужны и аудиовход, и выход."
+                    "Проверь выбранные устройства. Для звука нужны и аудиовход, и выход; для игры без звука оставь оба не выбранными."
                 }));
             }
             if !self.runtime.refreshing {
-                source = source.child(widgets::button(
+                source = source.child(action_button(
                     "refresh-video",
                     "Обновить устройства",
                     false,
@@ -247,19 +282,7 @@ impl Desktop {
                 ));
             }
         }
-        let mut body = column().gap_4().child(source).child(
-            card(
-                "Звук консоли",
-                "Управляй выходом и громкостью отдельно от остальных приложений.",
-            )
-            .child(self.device_picker(Selection::AudioInput, "Аудиовход карты", cx))
-            .child(self.device_picker(Selection::AudioOutput, "Куда выводить звук", cx))
-            .child(hint(if self.runtime.active() {
-                "Чтобы сменить устройства, заверши сеанс."
-            } else {
-                "Для подключения без звука оставь оба устройства не выбранными."
-            })),
-        );
+        let mut body = column().w_full().gap_6().child(source);
         if !self.runtime.devices.warnings.is_empty() {
             body = body.child(
                 card("Устройства требуют внимания", "")
@@ -271,16 +294,16 @@ impl Desktop {
 
     fn audio_page(&self, cx: &Context<Self>) -> AnyElement {
         let peak = self.runtime.peak().clamp(0., 1.);
-        let mut volume=card("Звук консоли","Громкость и mute применяются сразу.")
+        let mut volume=card("Звук консоли","Громкость и отключение звука применяются сразу.")
             .child(self.device_picker(Selection::AudioInput,"Аудиовход карты",cx))
-            .child(self.device_picker(Selection::AudioOutput,"Аудиовыход",cx))
+            .child(self.device_picker(Selection::AudioOutput,"Выход звука",cx))
             .child(numeric(cx,"gain","Громкость, %",self.runtime.settings.gain*100.,0.,100.,|s,v|s.runtime.settings.gain=v/100.))
             .child(switch(cx,"mute","Выключить звук",self.runtime.settings.muted,|s,v|s.runtime.settings.muted=v))
             .child(widgets::row("Уровень сигнала",format!("{:.0}%",peak*100.)))
-            .child(div().h(px(5.)).rounded_full().bg(rgb(0x303030)).child(div().h_full().w(relative(peak)).rounded_full().bg(rgb(0xededed))))
+            .child(div().h(px(5.)).flex_shrink_0().rounded_full().bg(rgb(theme::HOVER)).child(div().h_full().w(relative(peak)).rounded_full().bg(rgb(theme::TEXT))))
             .child(numeric(cx,"sync","Коррекция синхронизации, мс",self.runtime.settings.sync_ms as f32,-500.,500.,|s,v|s.runtime.settings.sync_ms=v.round() as i32))
             .child(hint("Плюс задерживает звук, минус задерживает видео. HDMI-задержка самой карты не меняется."));
-        volume = volume.child(widgets::button(
+        volume = volume.child(action_button(
             "reset-sync",
             "Сбросить синхронизацию",
             false,
@@ -291,30 +314,79 @@ impl Desktop {
             }),
         ));
         column()
-            .gap_4()
+            .w_full()
+            .gap_6()
             .child(volume)
             .child(self.equalizer_card(cx))
             .into_any_element()
     }
 
     fn equalizer_card(&self, cx: &Context<Self>) -> AnyElement {
-        let mut presets = div().flex().flex_wrap().gap_2();
-        for (i, (name, gains)) in EQ_FACTORY.into_iter().enumerate() {
-            presets = presets.child(widgets::button(
-                ("eq-factory", i),
-                name,
-                self.eq_selected.is_none() && self.runtime.settings.equalizer.gains == gains,
-                cx.listener(move |s, _, _, cx| {
-                    s.runtime.settings.equalizer.enabled = true;
-                    s.runtime.settings.equalizer.gains = gains;
-                    s.eq_selected = None;
-                    s.eq_input.update(cx, |f, cx| f.set_value("", cx));
-                    s.runtime.changed();
-                    cx.notify();
+        let mut choices: Vec<_> = EQ_FACTORY
+            .iter()
+            .enumerate()
+            .map(|(i, (name, gains))| {
+                (
+                    format!("factory:{i}"),
+                    (*name).to_owned(),
+                    self.eq_selected.is_none() && self.runtime.settings.equalizer.gains == *gains,
+                )
+            })
+            .collect();
+        choices.extend(
+            self.runtime
+                .settings
+                .equalizer_presets
+                .iter()
+                .enumerate()
+                .map(|(i, preset)| {
+                    (
+                        format!("user:{i}"),
+                        preset.name.clone(),
+                        self.eq_selected == Some(i)
+                            && self.runtime.settings.equalizer.gains == preset.gains,
+                    )
                 }),
-            ));
-        }
-        let mut bands = div().flex().w_full().gap_2().py_3();
+        );
+        let selected = choices
+            .iter()
+            .find(|(_, _, selected)| *selected)
+            .map(|(_, label, _)| label.clone())
+            .unwrap_or_else(|| "Свои настройки".into());
+        let presets = self.select_box(
+            Selection::Equalizer,
+            "eq-presets",
+            selected,
+            choices,
+            cx,
+            |s, key, _, cx| {
+                if let Some((kind, index)) = preset_key(&key) {
+                    match kind {
+                        "factory" => {
+                            if let Some((_, gains)) = EQ_FACTORY.get(index) {
+                                s.runtime.settings.equalizer.enabled = true;
+                                s.runtime.settings.equalizer.gains = *gains;
+                                s.eq_selected = None;
+                                s.eq_input.update(cx, |f, cx| f.set_value("", cx));
+                            }
+                        }
+                        "user" => {
+                            if let Some(p) =
+                                s.runtime.settings.equalizer_presets.get(index).cloned()
+                            {
+                                s.runtime.settings.equalizer.gains = p.gains;
+                                s.runtime.settings.equalizer.enabled = true;
+                                s.eq_selected = Some(index);
+                                s.eq_input.update(cx, |f, cx| f.set_value(p.name, cx));
+                            }
+                        }
+                        _ => {}
+                    }
+                    s.runtime.changed();
+                }
+            },
+        );
+        let mut bands = div().flex().w_full().flex_shrink_0().gap_2().py_3();
         for (i, freq) in [
             "31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k",
         ]
@@ -331,8 +403,8 @@ impl Desktop {
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(10.))
-                            .text_color(rgb(0xa3a3a3))
+                            .text_size(px(12.))
+                            .text_color(rgb(theme::SECONDARY))
                             .child(format!("{value:+.0}")),
                     )
                     .child(widgets::vertical_slider(
@@ -350,29 +422,11 @@ impl Desktop {
                     ))
                     .child(
                         div()
-                            .text_size(px(10.))
-                            .text_color(rgb(0xa3a3a3))
+                            .text_size(px(12.))
+                            .text_color(rgb(theme::SECONDARY))
                             .child(freq),
                     ),
             );
-        }
-        let mut users = column().gap_2();
-        for (i, preset) in self.runtime.settings.equalizer_presets.iter().enumerate() {
-            users = users.child(widgets::button(
-                ("eq-user", i),
-                preset.name.clone(),
-                self.eq_selected == Some(i),
-                cx.listener(move |s, _, _, cx| {
-                    if let Some(p) = s.runtime.settings.equalizer_presets.get(i).cloned() {
-                        s.runtime.settings.equalizer.gains = p.gains;
-                        s.runtime.settings.equalizer.enabled = true;
-                        s.eq_selected = Some(i);
-                        s.eq_input.update(cx, |f, cx| f.set_value(p.name, cx));
-                        s.runtime.changed();
-                        cx.notify();
-                    }
-                }),
-            ));
         }
         card("Эквалайзер", "10 полос · частота в Гц · усиление в дБ")
             .child(switch(
@@ -382,12 +436,12 @@ impl Desktop {
                 self.runtime.settings.equalizer.enabled,
                 |s, v| s.runtime.settings.equalizer.enabled = v,
             ))
-            .child(presets)
+            .child(setting_control("Пресет", presets))
             .child(bands)
             .child(hint(
                 "Автоматический запас громкости защищает от перегрузки при усилении полос.",
             ))
-            .child(users)
+            .child(caption("Название пресета"))
             .child(self.eq_input.clone())
             .child(
                 div()
@@ -472,21 +526,60 @@ impl Desktop {
 
     fn image_page(&self, cx: &Context<Self>) -> AnyElement {
         let color = self.runtime.settings.color;
-        let mut factory = div().flex().flex_wrap().gap_2();
-        for (i, (name, settings)) in color::FACTORY_PRESETS.into_iter().enumerate() {
-            factory = factory.child(widgets::button(
-                ("color-factory", i),
-                name,
-                self.color_selected.is_none() && self.runtime.settings.color == settings,
-                cx.listener(move |s, _, _, cx| {
-                    s.runtime.settings.color = settings;
-                    s.color_selected = None;
-                    s.preset_input.update(cx, |f, cx| f.set_value("", cx));
+        let mut choices: Vec<_> = color::FACTORY_PRESETS
+            .iter()
+            .enumerate()
+            .map(|(i, (name, settings))| {
+                (
+                    format!("factory:{i}"),
+                    (*name).to_owned(),
+                    self.color_selected.is_none() && color == *settings,
+                )
+            })
+            .collect();
+        choices.extend(self.runtime.settings.color_presets.iter().enumerate().map(
+            |(i, preset)| {
+                (
+                    format!("user:{i}"),
+                    preset.name.clone(),
+                    self.color_selected == Some(i) && color == preset.settings,
+                )
+            },
+        ));
+        let selected = choices
+            .iter()
+            .find(|(_, _, selected)| *selected)
+            .map(|(_, label, _)| label.clone())
+            .unwrap_or_else(|| "Свои настройки".into());
+        let presets = self.select_box(
+            Selection::ColorPreset,
+            "color-presets",
+            selected,
+            choices,
+            cx,
+            |s, key, _, cx| {
+                if let Some((kind, index)) = preset_key(&key) {
+                    match kind {
+                        "factory" => {
+                            if let Some((_, settings)) = color::FACTORY_PRESETS.get(index) {
+                                s.runtime.settings.color = *settings;
+                                s.color_selected = None;
+                                s.preset_input.update(cx, |f, cx| f.set_value("", cx));
+                            }
+                        }
+                        "user" => {
+                            if let Some(p) = s.runtime.settings.color_presets.get(index).cloned() {
+                                s.runtime.settings.color = p.settings;
+                                s.color_selected = Some(index);
+                                s.preset_input.update(cx, |f, cx| f.set_value(p.name, cx));
+                            }
+                        }
+                        _ => {}
+                    }
                     s.runtime.changed();
-                    cx.notify();
-                }),
-            ));
-        }
+                }
+            },
+        );
         let mut grading = card(
             "Цвет изображения",
             "Все изменения применяются к изображению консоли.",
@@ -498,7 +591,7 @@ impl Desktop {
             color.enabled,
             |s, v| s.runtime.settings.color.enabled = v,
         ))
-        .child(factory)
+        .child(setting_control("Пресет", presets))
         .child(numeric(
             cx,
             "exposure",
@@ -572,7 +665,7 @@ impl Desktop {
             self.original,
             |s, v| s.original = v,
         ))
-        .child(widgets::button(
+        .child(action_button(
             "color-reset",
             "Сбросить цвет",
             false,
@@ -583,84 +676,83 @@ impl Desktop {
                 cx.notify();
             }),
         ));
-        for (i, preset) in self.runtime.settings.color_presets.iter().enumerate() {
-            grading = grading.child(widgets::button(
-                ("color-user", i),
-                preset.name.clone(),
-                self.color_selected == Some(i),
-                cx.listener(move |s, _, _, cx| {
-                    if let Some(p) = s.runtime.settings.color_presets.get(i).cloned() {
-                        s.runtime.settings.color = p.settings;
-                        s.color_selected = Some(i);
-                        s.preset_input.update(cx, |f, cx| f.set_value(p.name, cx));
-                        s.runtime.changed();
-                        cx.notify();
-                    }
-                }),
-            ));
-        }
-        grading = grading.child(self.preset_input.clone()).child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_2()
-                .child(widgets::button(
-                    "color-save",
-                    "Сохранить копию",
-                    false,
-                    cx.listener(|s, _, _, cx| s.save_color_preset(false, cx)),
-                ))
-                .child(widgets::button(
-                    "color-update",
-                    "Обновить / переименовать",
-                    false,
-                    cx.listener(|s, _, _, cx| s.save_color_preset(true, cx)),
-                ))
-                .child(widgets::button(
-                    "color-delete",
-                    "Удалить выбранный",
-                    false,
-                    cx.listener(|s, _, _, cx| {
-                        if let Some(i) = s
-                            .color_selected
-                            .take()
-                            .filter(|i| *i < s.runtime.settings.color_presets.len())
-                        {
-                            s.runtime.settings.color_presets.remove(i);
-                            s.preset_input.update(cx, |f, cx| f.set_value("", cx));
-                            s.runtime.changed();
-                            cx.notify();
-                        }
-                    }),
-                )),
-        );
+        grading = grading
+            .child(caption("Название пресета"))
+            .child(self.preset_input.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(widgets::button(
+                        "color-save",
+                        "Сохранить копию",
+                        false,
+                        cx.listener(|s, _, _, cx| s.save_color_preset(false, cx)),
+                    ))
+                    .child(widgets::button(
+                        "color-update",
+                        "Обновить / переименовать",
+                        false,
+                        cx.listener(|s, _, _, cx| s.save_color_preset(true, cx)),
+                    ))
+                    .child(widgets::button(
+                        "color-delete",
+                        "Удалить выбранный",
+                        false,
+                        cx.listener(|s, _, _, cx| {
+                            if let Some(i) = s
+                                .color_selected
+                                .take()
+                                .filter(|i| *i < s.runtime.settings.color_presets.len())
+                            {
+                                s.runtime.settings.color_presets.remove(i);
+                                s.preset_input.update(cx, |f, cx| f.set_value("", cx));
+                                s.runtime.changed();
+                                cx.notify();
+                            }
+                        }),
+                    )),
+            );
         let upscale = self.runtime.settings.upscale;
-        let mut modes = div().flex().flex_wrap().gap_2();
-        for (i, (mode, label)) in [
-            (UpscaleMode::Standard, "Стандартный"),
-            (UpscaleMode::Nis, "NVIDIA NIS"),
-            (UpscaleMode::Fsr1, "AMD FSR 1"),
-            (UpscaleMode::RtxVideo, "RTX Video"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            modes = modes.child(widgets::button(
-                ("upscale-mode", i),
-                label,
-                upscale.mode == mode,
-                cx.listener(move |s, _, _, cx| {
-                    s.runtime.settings.upscale.mode = mode;
+        let modes = [
+            ("standard", UpscaleMode::Standard, "Стандартный"),
+            ("nis", UpscaleMode::Nis, "NVIDIA NIS"),
+            ("fsr1", UpscaleMode::Fsr1, "AMD FSR 1"),
+            ("rtx", UpscaleMode::RtxVideo, "RTX Video"),
+        ];
+        let selected = modes
+            .iter()
+            .find(|(_, mode, _)| *mode == upscale.mode)
+            .map(|(_, _, label)| *label)
+            .unwrap_or("Стандартный");
+        let mode_picker = self.select_box(
+            Selection::Upscale,
+            "upscale-mode",
+            selected.to_owned(),
+            modes
+                .iter()
+                .map(|(key, mode, label)| {
+                    (
+                        (*key).to_owned(),
+                        (*label).to_owned(),
+                        *mode == upscale.mode,
+                    )
+                })
+                .collect(),
+            cx,
+            move |s, key, _, _| {
+                if let Some((_, mode, _)) = modes.iter().find(|(value, _, _)| *value == key) {
+                    s.runtime.settings.upscale.mode = *mode;
                     s.runtime.changed();
-                    cx.notify();
-                }),
-            ));
-        }
+                }
+            },
+        );
         let mut enhancements = card(
             "Масштабирование",
             "Улучшение применяется при увеличении изображения.",
         )
-        .child(modes);
+        .child(setting_control("Режим", mode_picker));
         match upscale.mode {
             UpscaleMode::Nis => enhancements=enhancements.child(numeric(cx,"nis-sharp","Резкость NIS",upscale.nis_sharpness,0.,1.,|s,v|s.runtime.settings.upscale.nis_sharpness=v)),
             UpscaleMode::Fsr1 => enhancements=enhancements.child(numeric(cx,"fsr-sharp","Резкость FSR",upscale.fsr_sharpness,0.,1.,|s,v|s.runtime.settings.upscale.fsr_sharpness=v)),
@@ -676,7 +768,8 @@ impl Desktop {
             |s, v| s.comparison = v,
         ));
         column()
-            .gap_4()
+            .w_full()
+            .gap_6()
             .child(grading)
             .child(enhancements)
             .into_any_element()
@@ -730,11 +823,12 @@ impl Desktop {
         let mut identity = card("Discord", "Твой профиль, название игры и обложка.");
         match account {
             AuthStatus::Connected(account) => {
-                let mut profile = div().flex().items_center().gap_4();
+                let mut profile = div().flex().w_full().flex_shrink_0().items_center().gap_4();
                 if let Some(avatar) = self.artwork_image(account.avatar_url, window, cx) {
                     profile = profile.child(
                         img(avatar)
                             .size(px(56.))
+                            .flex_shrink_0()
                             .rounded_full()
                             .object_fit(gpui::ObjectFit::Cover),
                     );
@@ -745,8 +839,9 @@ impl Desktop {
                             .items_center()
                             .justify_center()
                             .size(px(56.))
+                            .flex_shrink_0()
                             .rounded_full()
-                            .bg(rgb(0x303030))
+                            .bg(rgb(theme::HOVER))
                             .child("D"),
                     );
                 }
@@ -754,12 +849,13 @@ impl Desktop {
                     .child(
                         profile.child(
                             column()
+                                .flex_1()
                                 .gap_1()
                                 .child(text(account.display_name))
                                 .child(hint("Аккаунт Discord подключен")),
                         ),
                     )
-                    .child(widgets::button(
+                    .child(action_button(
                         "discord-logout",
                         "Отключить аккаунт",
                         false,
@@ -773,7 +869,7 @@ impl Desktop {
                 identity = identity
                     .child(text("Подтверди вход в Discord"))
                     .child(hint("После подтверждения вернись в приложение."))
-                    .child(widgets::button(
+                    .child(action_button(
                         "discord-cancel",
                         "Отменить вход",
                         false,
@@ -788,7 +884,7 @@ impl Desktop {
                     identity = identity.child(hint(error));
                 }
                 identity = identity
-                    .child(widgets::button(
+                    .child(action_button(
                         "discord-login",
                         "Подключить Discord",
                         true,
@@ -797,7 +893,7 @@ impl Desktop {
                             cx.notify();
                         }),
                     ))
-                    .child(widgets::button(
+                    .child(action_button(
                         "discord-forget",
                         "Забыть сохраненный вход",
                         false,
@@ -811,32 +907,33 @@ impl Desktop {
         let game_name = self.runtime.game_name().to_owned();
         let has_game = !game_name.is_empty();
         let cover = self.runtime.cover_url();
-        let mut game = div().flex().items_center().gap_4();
+        let mut game = div().flex().w_full().flex_shrink_0().items_center().gap_4();
         if let Some(image) = self.artwork_image(cover, window, cx) {
             game = game.child(
                 img(image)
                     .size(px(76.))
+                    .flex_shrink_0()
                     .rounded_lg()
                     .object_fit(gpui::ObjectFit::Cover),
             );
         }
-        game = game.child(
-            column()
-                .gap_1()
-                .child(text(if game_name.is_empty() {
-                    "Игра пока не определена".to_owned()
-                } else {
-                    game_name
-                }))
-                .child(hint("Nintendo Switch")),
-        );
+        let mut game_details = column()
+            .flex_1()
+            .gap_1()
+            .child(text(if game_name.is_empty() {
+                "Игра пока не определена".to_owned()
+            } else {
+                game_name
+            }))
+            .child(hint("Nintendo Switch"));
         if has_game && (self.runtime.active() || self.runtime.settings.nintendo_enabled) {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |t| t.as_secs() as i64);
             let minutes = now.saturating_sub(self.runtime.game_started_at()).max(0) / 60;
-            game = game.child(hint(format!("В игре {minutes} мин")));
+            game_details = game_details.child(hint(format!("В игре {minutes} мин")));
         }
+        game = game.child(game_details);
         let presence = if !self.runtime.settings.discord_enabled {
             "Показ активности выключен.".to_owned()
         } else if !linked {
@@ -875,7 +972,7 @@ impl Desktop {
         };
         nintendo = nintendo.child(hint(component_text));
         if matches!(components, ComponentStatus::Installing(_)) {
-            nintendo = nintendo.child(widgets::button(
+            nintendo = nintendo.child(action_button(
                 "nintendo-cancel-install",
                 "Отменить установку",
                 false,
@@ -886,16 +983,20 @@ impl Desktop {
             ));
         } else {
             nintendo = nintendo
-                .child(widgets::button(
+                .child(action_button(
                     "nintendo-install",
-                    "Установить / восстановить компоненты",
+                    if matches!(components, ComponentStatus::Ready) {
+                        "Восстановить компоненты"
+                    } else {
+                        "Установить компоненты"
+                    },
                     false,
                     cx.listener(|s, _, _, cx| {
                         s.runtime.install_components();
                         cx.notify();
                     }),
                 ))
-                .child(widgets::button(
+                .child(action_button(
                     "nintendo-check",
                     "Проверить компоненты",
                     false,
@@ -906,17 +1007,31 @@ impl Desktop {
                 ));
         }
         nintendo=nintendo.child(hint("Node.js и nxapi устанавливаются только для Console Link. Системный Node не меняется. Вход в Nintendo настраивается отдельно."));
-        for (i, friend) in self.runtime.nintendo_friends().iter().enumerate() {
-            let id = friend.id.clone();
-            nintendo = nintendo.child(widgets::button(
-                ("nintendo-profile", i),
-                friend.name.clone(),
-                self.runtime.settings.nintendo_friend_id == id,
-                cx.listener(move |s, _, _, cx| {
-                    s.runtime.select_profile(id.clone());
-                    cx.notify();
-                }),
-            ));
+        let profiles = self.runtime.nintendo_friends();
+        if !profiles.is_empty() {
+            let selected = profiles
+                .iter()
+                .find(|friend| friend.id == self.runtime.settings.nintendo_friend_id)
+                .map(|friend| friend.name.clone())
+                .unwrap_or_else(|| "Выбери профиль".into());
+            let picker = self.select_box(
+                Selection::NintendoProfile,
+                "nintendo-profile",
+                selected,
+                profiles
+                    .iter()
+                    .map(|friend| {
+                        (
+                            friend.id.clone(),
+                            friend.name.clone(),
+                            friend.id == self.runtime.settings.nintendo_friend_id,
+                        )
+                    })
+                    .collect(),
+                cx,
+                |s, id, _, _| s.runtime.select_profile(id),
+            );
+            nintendo = nintendo.child(setting_control("Профиль", picker));
         }
         if self.runtime.nintendo_pending() {
             nintendo = nintendo.child(hint("Проверяем текущую игру…"));
@@ -925,7 +1040,7 @@ impl Desktop {
             nintendo = nintendo.child(hint(error.to_owned()));
         }
         nintendo = nintendo
-            .child(widgets::button(
+            .child(action_button(
                 "nintendo-refresh",
                 "Обновить статус Nintendo",
                 false,
@@ -941,6 +1056,7 @@ impl Desktop {
             "Выбрать название вручную",
             "Ручной выбор отключает автоматическое определение Nintendo.",
         )
+        .child(caption("Название игры"))
         .child(self.game_input.clone());
         if self.game_query.chars().count() >= 2 {
             for (i, entry) in self
@@ -960,7 +1076,7 @@ impl Desktop {
             }
         }
         if !self.game_query.trim().is_empty() {
-            manual = manual.child(widgets::button(
+            manual = manual.child(action_button(
                 "manual-game",
                 "Использовать введенное название",
                 true,
@@ -971,7 +1087,8 @@ impl Desktop {
             ));
         }
         column()
-            .gap_4()
+            .w_full()
+            .gap_6()
             .child(identity)
             .child(activity)
             .child(nintendo)
@@ -997,20 +1114,26 @@ impl Desktop {
                 self.runtime.settings.capture_preferences.automatic,
                 |s, v| s.runtime.settings.capture_preferences.automatic = v,
             ));
-            let mut rates = div().flex().flex_wrap().gap_2();
-            for fps in [60, 50, 30, 25, 24] {
-                rates = rates.child(widgets::button(
-                    ("target-fps", fps as usize),
-                    format!("{fps} FPS"),
-                    self.runtime.settings.capture_preferences.preferred_fps == fps,
-                    cx.listener(move |s, _, _, cx| {
+            let preferred = self.runtime.settings.capture_preferences.preferred_fps;
+            let rates = self.select_box(
+                Selection::FrameRate,
+                "target-fps",
+                format!("{preferred} FPS"),
+                [60, 50, 30, 25, 24]
+                    .into_iter()
+                    .map(|fps| (fps.to_string(), format!("{fps} FPS"), fps == preferred))
+                    .collect(),
+                cx,
+                |s, value, _, _| {
+                    if let Ok(fps) = value.parse::<u32>()
+                        && [60, 50, 30, 25, 24].contains(&fps)
+                    {
                         s.runtime.settings.capture_preferences.preferred_fps = fps;
                         s.runtime.changed();
-                        cx.notify();
-                    }),
-                ));
-            }
-            capture = capture.child(caption("Целевая частота")).child(rates);
+                    }
+                },
+            );
+            capture = capture.child(setting_control("Целевая частота", rates));
             if !self.runtime.settings.capture_preferences.automatic {
                 capture =
                     capture.child(self.device_picker(Selection::Resolution, "Разрешение", cx));
@@ -1035,7 +1158,7 @@ impl Desktop {
         }
         let mut keys = column().gap_1();
         for (key, description) in [
-            ("F1 / Tab", "Боковое меню"),
+            ("F1", "Боковое меню"),
             ("F11 / Alt+Enter / ⌘Enter", "Полный экран"),
             ("F10", "Сменить режим окна"),
             ("F8 / Ctrl+Shift+S / ⌘⇧S", "Скриншот"),
@@ -1051,14 +1174,15 @@ impl Desktop {
         let screenshot = card("Скриншоты", "PNG без рамки окна и элементов управления.")
             .child(caption("Папка для сохранения"))
             .child(self.path_input.clone())
-            .child(widgets::button(
+            .child(action_button(
                 "screenshot-now",
                 "Сделать скриншот",
                 false,
                 cx.listener(|s, _, window, cx| s.screenshot(window, cx)),
             ));
         column()
-            .gap_4()
+            .w_full()
+            .gap_6()
             .child(capture)
             .child(window)
             .child(screenshot)
@@ -1100,9 +1224,10 @@ impl Desktop {
                 .items_end()
                 .w_full()
                 .h(px(64.))
+                .flex_shrink_0()
                 .gap(px(1.))
                 .rounded_md()
-                .bg(rgb(0x101010))
+                .bg(rgb(theme::BACKGROUND))
                 .px_2()
                 .py_2();
             for sample in &self.runtime.monitor.samples {
@@ -1117,13 +1242,13 @@ impl Desktop {
                         .min_w(px(1.))
                         .h(relative((value / maximum).clamp(0., 1.)))
                         .rounded_sm()
-                        .bg(rgb(0x777777)),
+                        .bg(rgb(theme::MUTED)),
                 );
             }
             about = about.child(caption(title)).child(bars);
         }
         about
-            .child(widgets::button(
+            .child(action_button(
                 "repository",
                 "Исходный код и загрузки",
                 false,
@@ -1155,49 +1280,95 @@ fn available_resolutions(modes: &[console_link::capture::VideoMode]) -> Vec<(u32
     resolutions
 }
 
+fn preset_key(key: &str) -> Option<(&str, usize)> {
+    let (kind, index) = key.split_once(':')?;
+    Some((kind, index.parse().ok()?))
+}
+
+fn setting_control(label: &'static str, control: AnyElement) -> AnyElement {
+    div()
+        .flex()
+        .w_full()
+        .flex_shrink_0()
+        .items_center()
+        .gap_4()
+        .min_h(px(44.))
+        .child(div().w(px(128.)).flex_shrink_0().child(caption(label)))
+        .child(div().min_w_0().flex_1().child(control))
+        .into_any_element()
+}
+
 fn column() -> gpui::Div {
-    div().flex().flex_col().min_w(px(0.))
+    div().flex().flex_col().flex_shrink_0().min_w_0()
 }
 fn card(title: &str, description: &str) -> gpui::Div {
     column()
         .w_full()
-        .gap_3()
-        .p_4()
-        .rounded_lg()
-        .border_1()
-        .border_color(rgb(0x292929))
-        .bg(rgb(0x171717))
+        .gap_4()
+        .p_5()
+        .rounded_2xl()
+        .bg(rgb(theme::SURFACE))
         .child(
-            div()
-                .text_size(px(16.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(0xededed))
-                .child(title.to_owned()),
+            column()
+                .w_full()
+                .gap_2()
+                .pb_1()
+                .child(
+                    div()
+                        .text_size(px(17.))
+                        .line_height(relative(1.3))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(theme::TEXT))
+                        .child(title.to_owned()),
+                )
+                .when(!description.is_empty(), |s| {
+                    s.child(hint(description.to_owned()))
+                }),
         )
-        .when(!description.is_empty(), |s| {
-            s.child(hint(description.to_owned()))
-        })
 }
 fn text(value: impl Into<SharedString>) -> AnyElement {
     div()
+        .min_w_0()
+        .flex_shrink_0()
         .text_size(px(14.))
-        .text_color(rgb(0xededed))
+        .line_height(relative(1.5))
+        .text_color(rgb(theme::TEXT))
         .child(value.into())
         .into_any_element()
 }
 fn caption(value: impl Into<SharedString>) -> AnyElement {
     div()
-        .text_size(px(12.))
+        .min_w_0()
+        .flex_shrink_0()
+        .text_size(px(13.))
+        .line_height(relative(1.4))
         .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(rgb(0xa3a3a3))
+        .text_color(rgb(theme::SECONDARY))
         .child(value.into())
         .into_any_element()
 }
 fn hint(value: impl Into<SharedString>) -> AnyElement {
     div()
+        .min_w_0()
+        .flex_shrink_0()
         .text_size(px(13.))
-        .text_color(rgb(0xa3a3a3))
+        .line_height(relative(1.5))
+        .text_color(rgb(theme::SECONDARY))
         .child(value.into())
+        .into_any_element()
+}
+
+fn action_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    primary: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> AnyElement {
+    div()
+        .flex()
+        .min_w_0()
+        .flex_shrink_0()
+        .child(widgets::button(id, label, primary, on_click))
         .into_any_element()
 }
 
@@ -1243,18 +1414,50 @@ fn numeric(
     change: impl Fn(&mut Desktop, f32) + 'static,
 ) -> AnyElement {
     let weak = cx.entity().downgrade();
-    column()
-        .gap_1()
-        .child(widgets::row(label, format!("{value:.2}")))
-        .child(widgets::slider(id, value, min, max, move |v, _, app| {
-            let _ = weak.update(app, |s, cx| {
-                change(s, v);
-                s.runtime.changed();
-                cx.notify();
-            });
-        }))
+    let formatted = if label.ends_with('%') || label.ends_with("мс") || label == "Качество RTX"
+    {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    };
+    div()
+        .flex()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .items_center()
+        .gap_3()
+        .min_h(px(40.))
+        .child(div().flex_1().min_w_0().child(text(label)))
+        .child(
+            div()
+                .w(relative(0.4))
+                .min_w(px(110.))
+                .flex_shrink_0()
+                .child(widgets::slider(id, value, min, max, move |v, _, app| {
+                    let _ = weak.update(app, |s, cx| {
+                        change(s, v);
+                        s.runtime.changed();
+                        cx.notify();
+                    });
+                })),
+        )
+        .child(
+            div()
+                .w(px(56.))
+                .flex_shrink_0()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(theme::ELEVATED))
+                .text_size(px(13.))
+                .text_color(rgb(theme::TEXT))
+                .text_center()
+                .whitespace_nowrap()
+                .child(formatted),
+        )
         .into_any_element()
 }
+
 fn friendly_presence(raw: &str) -> String {
     if raw.starts_with("Activity sent") {
         "Название игры и карточка подтверждены Discord."

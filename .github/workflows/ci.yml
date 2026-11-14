@@ -6,43 +6,35 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      publish_release:
-        description: Publish downloadable files as a GitHub prerelease
-        type: boolean
-        required: true
-        default: false
       nintendo_components_only:
         description: Verify private Nintendo installation without GPU tests or release packaging
         type: boolean
         required: true
         default: false
-      release_tag:
-        description: Release tag matching Cargo.toml (for example v0.7.0)
-        type: string
-        required: true
-        default: v0.7.0
 
 permissions:
   contents: read
 
 concurrency:
   group: native-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+# Pin the compiler so a new stable release does not silently invalidate every cache.
+env:
+  RUSTUP_TOOLCHAIN: "1.100.0"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      - name: Validate version and publication target
+      - name: Validate package and bundle versions
         id: version
-        env:
-          REQUESTED_TAG: ${{ inputs.release_tag }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          NINTENDO_COMPONENTS_ONLY: ${{ inputs.nintendo_components_only }}
         run: |
           python3 - <<'PY'
           import os, re, tomllib, plistlib
@@ -52,16 +44,8 @@ jobs:
               raise SystemExit('Package version must be numeric major.minor.patch')
           if plistlib.loads(Path('packaging/Info.plist').read_bytes())['CFBundleShortVersionString'] != version:
               raise SystemExit('macOS bundle version must match Cargo.toml')
-          tag = 'v' + version
-          if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ.get('NINTENDO_COMPONENTS_ONLY') == 'true':
-              raise SystemExit('Component verification cannot publish an application release')
-          if os.environ.get('PUBLISH_RELEASE') == 'true':
-              if os.environ['GITHUB_REF'] != 'refs/heads/main':
-                  raise SystemExit('Release publication is restricted to main')
-              if os.environ.get('REQUESTED_TAG') != tag:
-                  raise SystemExit('Release tag must exactly match Cargo.toml')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f'version={version}\ntag={tag}\n')
+              output.write(f'version={version}\n')
           PY
 
   check:
@@ -76,19 +60,15 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
-    env:
-      CONSOLE_LINK_VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust components
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
-          rustup target add ${{ matrix.target }}
+      - name: Install pinned Rust components
+        shell: bash
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy --target ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: native-gpui-${{ matrix.target }}
+          key: native-check-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
@@ -108,46 +88,7 @@ jobs:
         if: ${{ !inputs.nintendo_components_only }}
         timeout-minutes: 2
         shell: bash
-        env:
-          NATIVE_TARGET: ${{ matrix.target }}
-        run: |
-          python - <<'PY'
-          import os, pathlib, re, subprocess, sys
-          suffix = '.exe' if sys.platform == 'win32' else ''
-          executable = pathlib.Path('target') / os.environ['NATIVE_TARGET'] / 'debug' / ('console-link' + suffix)
-          log = pathlib.Path(os.environ['RUNNER_TEMP']) / 'console-link-gpui-smoke.log'
-          arguments = [str(executable.resolve()), '--synthetic', '--smoke-cycle', '--smoke-seconds', '14']
-          try:
-              result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", timeout=30)
-          except subprocess.TimeoutExpired as error:
-              output = error.stdout or b''
-              if isinstance(output, bytes):
-                  output = output.decode('utf-8', errors='replace')
-              log.write_text(output, encoding='utf-8')
-              print(output)
-              raise SystemExit('Native GPUI smoke exceeded 30 seconds; no headless-success or CPU fallback is accepted')
-          log.write_text(result.stdout, encoding='utf-8')
-          print(result.stdout)
-          if result.returncode != 0:
-              raise SystemExit(f'Native GPUI smoke failed with exit code {result.returncode}; inspect window/GPU/DirectComposition diagnostics above')
-          counters = re.findall(r'GPUI_SHUTDOWN presents=(\d+) gpu_readback_playback=0', result.stdout)
-          if not counters or int(counters[-1]) <= 0:
-              raise SystemExit('Native GPUI smoke did not confirm a presented GPU frame without playback readback')
-          for mode in ('Borderless', 'Fullscreen', 'Windowed'):
-              if f'mode={mode}' not in result.stdout:
-                  raise SystemExit(f'Native smoke did not exercise {mode}')
-          borderless = [line for line in result.stdout.splitlines() if 'mode=Borderless fullscreen=false' in line]
-          if not borderless:
-              raise SystemExit('Borderless mode was not confirmed outside native fullscreen')
-          # Native style changes notify GPUI on the next event-loop turn.
-          # Check the settled sample, while rejecting persistent viewport drift.
-          line = borderless[-1]
-          sizes = re.findall(r'Size \{ ([0-9.]+)px × ([0-9.]+)px \}', line)
-          if len(sizes) < 2:
-              raise SystemExit(f'Could not parse borderless native bounds and viewport: {line}')
-          if sizes[0] != sizes[1]:
-              raise SystemExit(f'Borderless native bounds and GPUI viewport differ: {line}')
-          PY
+        run: python scripts/smoke-native.py "target/${{ matrix.target }}/debug/console-link${{ runner.os == 'Windows' && '.exe' || '' }}"
       - name: Upload GPUI smoke diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -161,82 +102,72 @@ jobs:
         env:
           RUNTIME_TEST_DIR: ${{ runner.temp }}/console-link-nintendo-check
         run: cargo run --locked --target ${{ matrix.target }} --bin console-link -- --install-nintendo-runtime "$RUNTIME_TEST_DIR"
+
+  package:
+    # Build release candidates alongside tests, never for every PR iteration.
+    # Publication requires the entire source run to be successful.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.nintendo_components_only
+    needs: validate
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    env:
+      CONSOLE_LINK_VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust compiler
+        shell: bash
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-release-${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       - name: Package macOS
-        if: runner.os == 'macOS' && !inputs.nintendo_components_only
+        if: runner.os == 'macOS'
         run: |
           bash scripts/package-macos.sh
+          python scripts/smoke-native.py "dist/Console Link.app/Contents/MacOS/console-link"
           mkdir -p dist/release
           cp dist/console-link-macos-arm64.zip "dist/release/console-link-${CONSOLE_LINK_VERSION}-macos-arm64.zip"
       - name: Package Windows and verify installation
-        if: runner.os == 'Windows' && !inputs.nintendo_components_only
+        if: runner.os == 'Windows'
         timeout-minutes: 25
         shell: pwsh
         run: |
           ./scripts/package-windows.ps1 -SmokeTest
+          python scripts/smoke-native.py dist/windows-portable/console-link.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged native GPU smoke failed.' }
           New-Item -ItemType Directory -Force dist/release | Out-Null
           Copy-Item "dist/console-link-$env:CONSOLE_LINK_VERSION-windows-x64.zip" dist/release/
           Copy-Item "dist/Console-Link-$env:CONSOLE_LINK_VERSION-Setup-x64.exe" dist/release/
-      - name: Upload release files
-        if: ${{ !inputs.nintendo_components_only }}
+      - name: Upload release candidates
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
           path: dist/release/*
           if-no-files-found: error
-      - name: Upload installer diagnostics on failure
-        if: failure() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-diagnostics
-          path: ${{ runner.temp }}/console-link-*.log
-          if-no-files-found: ignore
-
-  publish:
-    needs: [validate, check]
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && !inputs.nintendo_components_only
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
-      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          path: release-files
-          merge-multiple: true
-      - name: Verify files and publish complete prerelease
+          compression-level: 0
+          retention-days: 14
+      - name: Show publication inputs
         shell: bash
         run: |
-          set -euo pipefail
-          files=(
-            "console-link-${RELEASE_VERSION}-macos-arm64.zip"
-            "console-link-${RELEASE_VERSION}-windows-x64.zip"
-            "Console-Link-${RELEASE_VERSION}-Setup-x64.exe"
-          )
-          for file in "${files[@]}"; do test -s "release-files/$file"; done
-          count=$(find release-files -maxdepth 1 -type f | wc -l)
-          test "$count" -eq 3
-          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo 'Release tag already exists; refusing to replace existing release files.' >&2
-            exit 1
-          else
-            result=$?
-            test "$result" -eq 2
-          fi
-          (cd release-files && sha256sum "${files[@]}" > SHA256SUMS.txt)
-          gh release create "$RELEASE_TAG" release-files/* \
-            --target "$GITHUB_SHA" \
-            --title "Console Link $RELEASE_VERSION" \
-            --notes-file packaging/release-notes.md \
-            --draft --prerelease --latest=false
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > release-assets.txt
-          printf '%s\n' "${files[@]}" SHA256SUMS.txt | sort > expected-assets.txt
-          diff -u expected-assets.txt release-assets.txt
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
-          gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,tagName
+          echo 'Release candidate ready for ${{ matrix.target }}.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'After this entire run succeeds, use **Publish tested release** with:' >> "$GITHUB_STEP_SUMMARY"
+          echo "- build_run_id: $GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "- release_tag: v$CONSOLE_LINK_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload packaging diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaging-diagnostics-${{ matrix.target }}
+          path: ${{ runner.temp }}/console-link-*.log
+          if-no-files-found: ignore

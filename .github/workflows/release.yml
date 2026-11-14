@@ -1,0 +1,125 @@
+name: Publish tested release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Native builds run from main (the number in its Actions URL)
+        type: string
+        required: true
+      release_tag:
+        description: Release tag matching the built version, for example v0.7.1
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+# Publication is short and must not be interrupted halfway through asset upload.
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      REQUESTED_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Verify source build
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN_ID" > source-run.json
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          run = json.loads(Path('source-run.json').read_text())
+          checks = (
+              run['status'] == 'completed',
+              run['conclusion'] == 'success',
+              run['event'] in ('push', 'workflow_dispatch'),
+              run['head_branch'] == 'main',
+              run['path'] == '.github/workflows/ci.yml',
+              run['repository']['full_name'] == os.environ['GH_REPO'],
+              run['head_repository']['full_name'] == os.environ['GH_REPO'],
+              re.fullmatch(r'[0-9a-f]{40}', run['head_sha']) is not None,
+          )
+          if not all(checks):
+              raise SystemExit('Only a successful Native builds run from this repository main branch can be published')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"sha={run['head_sha']}\n")
+          PY
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+      - name: Validate built version and release target
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, tomllib, plistlib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+              raise SystemExit('Package version must be numeric major.minor.patch')
+          if plistlib.loads(Path('packaging/Info.plist').read_bytes())['CFBundleShortVersionString'] != version:
+              raise SystemExit('macOS bundle version must match Cargo.toml')
+          if os.environ['REQUESTED_TAG'] != 'v' + version:
+              raise SystemExit('Release tag must exactly match the source build Cargo.toml')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
+          if git ls-remote --exit-code --tags origin "refs/tags/$REQUESTED_TAG" >/dev/null 2>&1; then
+            echo 'Release tag already exists; refusing to replace existing release files.' >&2
+            exit 1
+          else
+            result=$?
+            test "$result" -eq 2
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+          pattern: release-*
+          path: release-files
+          merge-multiple: true
+      - name: Verify files and publish complete prerelease
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          files=(
+            "console-link-${RELEASE_VERSION}-macos-arm64.zip"
+            "console-link-${RELEASE_VERSION}-windows-x64.zip"
+            "Console-Link-${RELEASE_VERSION}-Setup-x64.exe"
+          )
+          for file in "${files[@]}"; do test -s "release-files/$file"; done
+          count=$(find release-files -maxdepth 1 -type f | wc -l)
+          test "$count" -eq 3
+          (cd release-files && sha256sum "${files[@]}" > SHA256SUMS.txt)
+          gh release create "$REQUESTED_TAG" release-files/* \
+            --target "$SOURCE_SHA" \
+            --title "Console Link $RELEASE_VERSION" \
+            --notes-file packaging/release-notes.md \
+            --draft --prerelease --latest=false
+          gh release view "$REQUESTED_TAG" --json assets --jq '.assets[].name' | sort > release-assets.txt
+          printf '%s\n' "${files[@]}" SHA256SUMS.txt | sort > expected-assets.txt
+          diff -u expected-assets.txt release-assets.txt
+          gh release edit "$REQUESTED_TAG" --draft=false --prerelease --latest=false
+          gh release view "$REQUESTED_TAG" --json url,isDraft,isPrerelease,tagName
+          echo "Published tested build $BUILD_RUN_ID at $SOURCE_SHA without rebuilding." >> "$GITHUB_STEP_SUMMARY"

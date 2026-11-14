@@ -10,6 +10,8 @@ impl AssetSource for Assets {
             "ui/image.svg" => include_bytes!("../../assets/ui/image.svg"),
             "ui/chat.svg" => include_bytes!("../../assets/ui/chat.svg"),
             "ui/settings.svg" => include_bytes!("../../assets/ui/settings.svg"),
+            "ui/chevron-down.svg" => include_bytes!("../../assets/ui/chevron-down.svg"),
+            "ui/check.svg" => include_bytes!("../../assets/ui/check.svg"),
             _ => return Ok(None),
         };
         Ok(Some(Cow::Borrowed(bytes)))
@@ -21,6 +23,8 @@ impl AssetSource for Assets {
             "ui/image.svg",
             "ui/chat.svg",
             "ui/settings.svg",
+            "ui/chevron-down.svg",
+            "ui/check.svg",
         ]
         .into_iter()
         .filter(|p| p.starts_with(path))

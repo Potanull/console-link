@@ -3,6 +3,7 @@ mod artwork;
 mod assets;
 mod pages;
 mod presenter;
+mod theme;
 mod widgets;
 mod window;
 
@@ -17,8 +18,6 @@ use gpui::{prelude::*, *};
 use presenter::Presenter;
 use std::{
     borrow::Cow,
-    cell::Cell,
-    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -71,7 +70,6 @@ pub(super) struct Desktop {
     pub(super) comparison: bool,
     artwork: Artwork,
     brand: Arc<RenderImage>,
-    calibration: Arc<VideoFrame>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
     presenter: Option<Presenter>,
@@ -79,7 +77,6 @@ pub(super) struct Desktop {
     frame: Option<Arc<VideoFrame>>,
     recipe: Option<Recipe>,
     export: Option<std::sync::mpsc::Receiver<Result<Arc<VideoFrame>, String>>>,
-    video_bounds: Rc<Cell<Bounds<Pixels>>>,
     modes: WindowModes,
     fullscreen_return: GameWindowMode,
     cursor: CursorIdle,
@@ -105,7 +102,6 @@ impl Desktop {
     fn new(persistent: bool, synthetic: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let runtime = Runtime::new(persistent);
         let brand = brand_image();
-        let calibration = synthetic_frame(0);
         let startup_page = crate::argument("--ui-page");
         let page = match startup_page.as_deref() {
             Some("audio") => Page::Audio,
@@ -172,22 +168,26 @@ impl Desktop {
             eq_input,
             path_input,
             game_query,
-            selection: None,
+            selection: match crate::argument("--ui-select").as_deref() {
+                Some("video") => Some(pages::Selection::Video),
+                Some("audio") => Some(pages::Selection::AudioInput),
+                Some("eq") => Some(pages::Selection::Equalizer),
+                Some("color") => Some(pages::Selection::ColorPreset),
+                _ => None,
+            },
             color_selected: None,
             eq_selected: None,
             original: false,
             comparison: false,
             artwork: Artwork::new(persistent),
             brand,
-            calibration: calibration.clone(),
             focus,
             _subscriptions: subscriptions,
             presenter,
             renderer,
-            frame: Some(calibration),
+            frame: None,
             recipe: None,
             export: None,
-            video_bounds: Rc::new(Cell::new(Bounds::default())),
             modes: WindowModes::default(),
             fullscreen_return: GameWindowMode::Windowed,
             cursor: CursorIdle::default(),
@@ -352,6 +352,11 @@ impl Desktop {
         }
     }
     fn draw_video(&mut self, window: &mut Window) {
+        // Setup and settings are opaque GPUI surfaces. They need no video pass.
+        if !self.playing {
+            self.redraw = false;
+            return;
+        }
         let Some(presenter) = self.presenter.as_mut() else {
             return;
         };
@@ -367,11 +372,7 @@ impl Desktop {
         if !self.redraw {
             return;
         }
-        let bounds = if self.playing {
-            Bounds::new(point(px(0.), px(0.)), window.viewport_size())
-        } else {
-            self.video_bounds.get()
-        };
+        let bounds = Bounds::new(point(px(0.), px(0.)), window.viewport_size());
         let scale = window.scale_factor();
         let source = self
             .frame
@@ -384,9 +385,7 @@ impl Desktop {
             f32::from(bounds.size.height) * scale,
         ];
         let viewport = fit_viewport(rect, size, source).unwrap_or([0., 0., 1., 1.]);
-        let frame = if !self.playing {
-            (self.page == Page::Image).then(|| self.calibration.clone())
-        } else if !self.synthetic && self.runtime.displayed().is_none() {
+        let frame = if !self.synthetic && self.runtime.displayed().is_none() {
             None
         } else {
             self.frame.clone()
@@ -400,11 +399,7 @@ impl Desktop {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        renderer.set_background(if self.playing {
-            [0, 0, 0]
-        } else {
-            [16, 16, 16]
-        });
+        renderer.set_background([0, 0, 0]);
         match presenter.present(|device, queue, view, encoder| {
             renderer.draw(
                 device,
@@ -566,7 +561,10 @@ impl Desktop {
         }
     }
     fn escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
-        if self.overlay {
+        if self.selection.take().is_some() {
+            cx.notify();
+            return;
+        } else if self.overlay {
             self.overlay = false;
         } else if self.playing && self.modes.mode() != GameWindowMode::Windowed {
             self.set_mode(GameWindowMode::Windowed, window, cx);
@@ -612,102 +610,43 @@ impl Desktop {
         self.shutdown(w, cx);
         cx.quit();
     }
-    fn video_slot(&self, height: Option<f32>) -> AnyElement {
-        let cell = self.video_bounds.clone();
-        let mut slot = div()
-            .relative()
-            .w_full()
-            .min_h(px(220.))
-            .rounded_lg()
-            .overflow_hidden();
-        slot = if let Some(height) = height {
-            slot.h(px(height))
-        } else {
-            slot.h_full()
-        };
-        slot = slot.child(
-            canvas(
-                move |bounds, _, _| {
-                    cell.set(bounds);
-                },
-                |_, _, _, _| {},
-            )
-            .size_full(),
-        );
-        if !self.playing && self.page == Page::Session {
-            slot = slot.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(img(self.brand.clone()).size(px(96.)).rounded_2xl())
-                    .child(
-                        div()
-                            .text_size(px(22.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Твоя консоль. Твой экран."),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .text_color(rgb(0xb5b5b5))
-                            .child("Выбери карту справа и подключи консоль"),
-                    ),
-            );
-        }
-        slot.into_any_element()
-    }
     fn navigation(
         &mut self,
-        compact: bool,
+        drawer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut nav = div()
-            .w(px(if compact { 76. } else { 224. }))
+            .w(px(if drawer { 192. } else { 232. }))
             .flex_shrink_0()
             .h_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x171717));
-        let mut brand = div()
-            .h(px(72.))
-            .flex_shrink_0()
-            .px_3()
-            .flex()
-            .gap_3()
-            .items_center()
-            .bg(rgb(0x101010))
-            .child(img(self.brand.clone()).size(px(48.)).rounded_xl());
-        if compact {
-            brand = brand.justify_center();
-        }
-        if !compact {
-            brand = brand.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .font_weight(FontWeight::BOLD)
-                            .text_size(px(15.))
-                            .child("Console Link"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x949494))
-                            .child("Игровое пространство"),
-                    ),
-            );
-        }
-        nav = nav.child(brand).child(div().h(px(16.)));
-        for (page, icon, label) in [
+            .bg(rgb(theme::SURFACE));
+        nav = nav.child(
+            div()
+                .h(px(80.))
+                .flex_shrink_0()
+                .px_4()
+                .flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    img(self.brand.clone())
+                        .w(px(48.))
+                        .h(px(48.))
+                        .object_fit(ObjectFit::Contain)
+                        .flex_shrink_0(),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Console Link"),
+                ),
+        );
+        for (page, path, label) in [
             (Page::Session, "ui/console.svg", "Подключение"),
             (Page::Audio, "ui/audio.svg", "Звук"),
             (Page::Image, "ui/image.svg", "Изображение"),
@@ -715,119 +654,200 @@ impl Desktop {
             (Page::Settings, "ui/settings.svg", "Настройки"),
         ] {
             let selected = self.page == page;
-            let mut item = div()
-                .id(("nav", page as usize))
-                .mx_2()
-                .mb_1()
-                .h(px(44.))
-                .px_3()
-                .rounded_full()
-                .flex()
-                .items_center()
-                .gap_3()
-                .cursor_pointer()
-                .bg(rgb(if selected { 0x292929 } else { 0x171717 }))
-                .text_color(rgb(if selected { 0xffffff } else { 0xb5b5b5 }))
-                .hover(|s| s.bg(rgb(0x242424)).text_color(rgb(0xffffff)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.page = page;
-                    this.selection = None;
-                    if page == Page::Discord {
-                        this.runtime.check_components();
-                    }
-                    cx.notify();
-                }))
-                .child(svg().path(icon).size(px(24.)));
-            if compact {
-                item = item.justify_center().px_0();
-            }
-            if !compact {
-                item = item.child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(label),
-                );
-            }
-            nav = nav.child(item);
+            nav = nav.child(
+                div()
+                    .id(("nav", page as usize))
+                    .mx_3()
+                    .mb_1()
+                    .min_h(px(44.))
+                    .flex_shrink_0()
+                    .px_3()
+                    .py_2()
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .focusable()
+                    .tab_stop(true)
+                    .cursor_pointer()
+                    .border_1()
+                    .border_color(rgb(if selected {
+                        theme::BORDER
+                    } else {
+                        theme::SURFACE
+                    }))
+                    .bg(rgb(if selected {
+                        theme::ELEVATED
+                    } else {
+                        theme::SURFACE
+                    }))
+                    .text_color(rgb(if selected {
+                        theme::TEXT
+                    } else {
+                        theme::SECONDARY
+                    }))
+                    .hover(|s| s.bg(rgb(theme::HOVER)))
+                    .focus(|s| s.border_color(rgb(theme::TEXT)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.page = page;
+                        this.selection = None;
+                        if page == Page::Discord {
+                            this.runtime.check_components();
+                        }
+                        cx.notify();
+                    }))
+                    .child(widgets::icon(
+                        path,
+                        20.,
+                        if selected {
+                            theme::TEXT
+                        } else {
+                            theme::SECONDARY
+                        },
+                    ))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(label),
+                    ),
+            );
         }
-        nav = nav.child(div().flex_1());
+        nav = nav.child(div().flex_1().min_h(px(16.)));
         let account = self.runtime.discord_account();
         let mut footer = div()
-            .h(px(64.))
-            .px_3()
+            .min_h(px(72.))
+            .flex_shrink_0()
+            .p_4()
             .flex()
             .items_center()
-            .gap_2()
-            .bg(rgb(0x101010));
-        if compact {
-            footer = footer.justify_center();
-        }
+            .gap_3();
         let avatar = account.as_ref().and_then(|a| a.avatar_url.clone());
         if let Some(image) = self.artwork_image(avatar, window, cx) {
-            footer = footer.child(img(image).size(px(32.)).rounded_full());
+            footer = footer.child(img(image).size(px(32.)).flex_shrink_0().rounded_full());
         } else {
             footer = footer.child(
                 div()
                     .size(px(32.))
+                    .flex_shrink_0()
                     .rounded_full()
-                    .bg(rgb(0xf2f2f2))
-                    .text_color(rgb(0x101010))
+                    .bg(rgb(theme::ELEVATED))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(svg().path("ui/console.svg").size(px(18.))),
+                    .child(widgets::icon("ui/console.svg", 20., theme::SECONDARY)),
             );
         }
-        if !compact {
-            footer = footer.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(
-                                account.map_or_else(|| "Console Link".into(), |a| a.display_name),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(10.))
-                            .text_color(rgb(0x949494))
-                            .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
-                    ),
-            );
-        }
+        footer = footer.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(
+                            account.map_or_else(|| "Локальный сеанс".into(), |a| a.display_name),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(theme::MUTED))
+                        .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+                ),
+        );
         nav.child(footer).into_any_element()
     }
     fn page_header(&self) -> AnyElement {
-        let (icon, title) = match self.page {
-            Page::Session => ("ui/console.svg", "Консоль"),
+        let (path, title) = match self.page {
+            Page::Session => ("ui/console.svg", "Подключение"),
             Page::Audio => ("ui/audio.svg", "Звук"),
             Page::Image => ("ui/image.svg", "Изображение"),
             Page::Discord => ("ui/chat.svg", "Discord"),
             Page::Settings => ("ui/settings.svg", "Настройки"),
         };
         div()
-            .h(px(56.))
+            .h(px(64.))
             .flex_shrink_0()
             .px_6()
             .flex()
             .items_center()
             .gap_3()
-            .bg(rgb(0x101010))
-            .border_b_1()
-            .border_color(rgb(0x242424))
-            .child(svg().path(icon).size(px(22.)).text_color(rgb(0x949494)))
+            .child(widgets::icon(path, 20., theme::SECONDARY))
             .child(
                 div()
-                    .text_size(px(16.))
+                    .text_size(px(17.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(title),
             )
+            .into_any_element()
+    }
+    fn quick_controls(&self, cx: &Context<Self>) -> AnyElement {
+        let weak = cx.entity().downgrade();
+        div()
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .rounded_xl()
+            .bg(rgb(theme::SURFACE))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_1().text_size(px(13.)).child(format!(
+                        "Громкость {}%",
+                        (self.runtime.settings.gain * 100.).round()
+                    )))
+                    .child(button(
+                        "quick-mute",
+                        if self.runtime.settings.muted {
+                            "Включить звук"
+                        } else {
+                            "Выключить звук"
+                        },
+                        false,
+                        cx.listener(|this, _, _, cx| {
+                            this.runtime.settings.muted = !this.runtime.settings.muted;
+                            this.runtime.changed();
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .child(widgets::slider(
+                "quick-volume",
+                self.runtime.settings.gain,
+                0.,
+                1.,
+                move |value, _, app| {
+                    let _ = weak.update(app, |this, cx| {
+                        this.runtime.settings.gain = value;
+                        this.runtime.changed();
+                        cx.notify();
+                    });
+                },
+            ))
+            .child(button(
+                "quick-window",
+                format!(
+                    "Режим окна: {} · F10",
+                    match self.runtime.settings.game_window_mode {
+                        GameWindowMode::Windowed => "Обычный",
+                        GameWindowMode::Borderless => "Без границ",
+                        GameWindowMode::Fullscreen => "Полный экран",
+                    }
+                ),
+                false,
+                cx.listener(|this, _, window, cx| this.cycle(&CycleMode, window, cx)),
+            ))
             .into_any_element()
     }
 }
@@ -843,8 +863,20 @@ impl Render for Desktop {
             .relative()
             .size_full()
             .overflow_hidden()
-            .text_color(rgb(0xeeeeee))
+            .text_color(rgb(theme::TEXT))
             .font_family("Inter")
+            .text_size(px(14.))
+            .line_height(relative(1.5))
+            .on_key_down(|event, window, cx| {
+                if event.keystroke.key == "tab" {
+                    if event.keystroke.modifiers.shift {
+                        window.focus_prev();
+                    } else {
+                        window.focus_next();
+                    }
+                    cx.stop_propagation();
+                }
+            })
             .on_action(cx.listener(Self::toggle_overlay))
             .on_action(cx.listener(Self::escape))
             .on_action(cx.listener(Self::fullscreen))
@@ -856,110 +888,77 @@ impl Render for Desktop {
             .on_action(cx.listener(Self::stop_action))
             .on_action(cx.listener(Self::quit));
         if self.presenter.is_none() || self.renderer.is_none() {
-            root = root.bg(rgb(0x090909));
+            root = root.bg(rgb(theme::BACKGROUND));
         }
         if !self.playing || self.overlay {
-            let compact = self.playing
-                || self.page == Page::Session
-                || f32::from(window.viewport_size().width) < 1050.;
-            let navigation = self.navigation(compact, window, cx);
+            let navigation = self.navigation(self.playing, window, cx);
             let message = self
                 .runtime
                 .error
                 .clone()
                 .or_else(|| self.gpu_error.clone())
                 .or_else(|| self.runtime.notice.clone());
-            let header = self.page_header();
-            let mut body = div().flex_1().min_h_0().min_w_0().flex().flex_col();
-            if !self.playing && self.page == Page::Session {
-                let mut setup = div()
-                    .id("connection-panel")
-                    .w(px(320.))
-                    .flex_shrink_0()
-                    .h_full()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .bg(rgb(0x171717));
-                setup = setup.child(
-                    div()
-                        .text_size(px(12.))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0xb5b5b5))
-                        .child("ПОДКЛЮЧЕНИЕ"),
-                );
-                if let Some(message) = message {
-                    setup = setup.child(
-                        div()
-                            .p_3()
-                            .rounded_md()
-                            .bg(rgb(0x101010))
-                            .text_size(px(12.))
-                            .child(message),
-                    );
-                }
-                setup = setup.child(self.page_content(window, cx));
-                let stage = div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .p_6()
-                    .child(self.video_slot(None));
-                body = body.child(div().size_full().flex().child(stage).child(setup));
-            } else {
-                let mut scroll = div()
-                    .id("page-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_6()
-                    .flex()
-                    .flex_col()
-                    .gap_4();
-                if !self.playing && self.page == Page::Image {
-                    let width = (f32::from(window.viewport_size().width)
-                        - if compact { 76. } else { 224. }
-                        - 48.)
-                        .max(320.);
-                    let height =
-                        (width * 9. / 16.).min(f32::from(window.viewport_size().height) * 0.58);
-                    scroll = scroll.child(self.video_slot(Some(height)));
-                }
-                if let Some(message) = message {
-                    scroll = scroll.child(
-                        div()
-                            .p_3()
-                            .rounded_md()
-                            .bg(rgb(0x171717))
-                            .text_size(px(13.))
-                            .child(message),
-                    );
-                }
-                scroll = scroll.child(self.page_content(window, cx));
-                if self.playing {
-                    scroll = scroll.child(button(
-                        "resume",
-                        "Вернуться к игре · Esc",
-                        true,
-                        cx.listener(|this, _, window, cx| {
-                            this.overlay = false;
-                            this.focus.focus(window);
-                            cx.notify();
-                        }),
-                    ));
-                }
-                body = body.child(scroll);
+            let mut column = div()
+                .w_full()
+                .max_w(px(if self.page == Page::Session {
+                    820.
+                } else {
+                    920.
+                }))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_6();
+            if self.playing {
+                column = column.child(self.quick_controls(cx));
             }
+            if let Some(message) = message {
+                column = column.child(
+                    div()
+                        .w_full()
+                        .flex_shrink_0()
+                        .p_4()
+                        .rounded_lg()
+                        .bg(rgb(theme::ELEVATED))
+                        .text_size(px(14.))
+                        .line_height(relative(1.5))
+                        .child(message),
+                );
+            }
+            column = column.child(self.page_content(window, cx));
+            if self.playing {
+                column = column.child(button(
+                    "resume",
+                    "Вернуться к игре · Esc",
+                    true,
+                    cx.listener(|this, _, window, cx| {
+                        this.overlay = false;
+                        this.focus.focus(window);
+                        cx.notify();
+                    }),
+                ));
+            }
+            let scroll = div()
+                .id("page-scroll")
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .w_full()
+                .overflow_y_scroll()
+                .p_6()
+                .flex()
+                .flex_col()
+                .items_center()
+                .child(column);
             let content = div()
                 .flex_1()
                 .min_w_0()
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(header)
-                .child(body);
+                .bg(rgb(theme::BACKGROUND))
+                .child(self.page_header())
+                .child(scroll);
             let layout = div().flex().size_full().child(navigation).child(content);
             root = if self.playing {
                 root.child(
@@ -968,9 +967,10 @@ impl Render for Desktop {
                         .right_0()
                         .top_0()
                         .bottom_0()
-                        .w(px(f32::from(window.viewport_size().width).min(660.)))
-                        .bg(rgb(0x101010))
-                        .shadow_xl()
+                        .w(px((f32::from(window.viewport_size().width) - 24.).min(800.)))
+                        .border_l_1()
+                        .border_color(rgb(theme::BORDER))
+                        .bg(rgb(theme::BACKGROUND))
                         .child(layout),
                 )
             } else {
@@ -1039,7 +1039,7 @@ fn brand_image() -> Arc<RenderImage> {
 }
 
 fn synthetic_frame(index: u64) -> Arc<VideoFrame> {
-    // Also serves as the inactive image-calibration card. No camera is opened.
+    // The synthetic smoke source never opens a camera.
     let (w, h) = (1920usize, 1080usize);
     let mut rgba = vec![0; w * h * 4];
     let colors = [
@@ -1108,7 +1108,16 @@ pub fn run() {
                 }
             })
             .detach();
-            let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
+            let initial_size = crate::argument("--ui-size")
+                .and_then(|value| {
+                    value
+                        .split_once('x')
+                        .and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))
+                })
+                .filter(|(w, h)| w.is_finite() && h.is_finite())
+                .map(|(w, h)| size(px(w.clamp(760., 3840.)), px(h.clamp(600., 2160.))))
+                .unwrap_or_else(|| size(px(1180.), px(800.)));
+            let bounds = Bounds::centered(None, initial_size, cx);
             let handle = cx
                 .open_window(
                     WindowOptions {

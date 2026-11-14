@@ -1,16 +1,17 @@
-# Иконка Console Link
+# Console Link icon
 
-Черно-белый геймпад на темной плитке. Создана imagegen по поручению владельца проекта.
+Minimal white gamepad with a D-pad and integrated Triforce, without a frame or lettering.
+The wordmark is rendered separately by the interface.
 
-- icon.png: исходник с прозрачностью.
-- window-icon.png: 256px для окна и taskbar.
-- icon.icns: macOS application bundle.
+Generated with the built-in imagegen tool. The selected source uses a dark background;
+transparent generations were rejected because their edges contained visible artifacts.
+PNG resizing uses macOS sips. ICNS and ICO embed those same PNG payloads.
+
+- icon.png: 1024 px application artwork.
+- window-icon.png: 256 px window and navigation artwork.
+- icon.icns: macOS bundle.
 - icon.ico: Windows executable resource.
 
-Форматы ICNS/ICO получены из того же исходника без изменения композиции.
-
-## Framed minimalist gamepad logo
-
-Generated with the built-in imagegen tool using the user-provided graphic poster as a style reference. Final assets: icon.png, window-icon.png (256px), icon.icns and icon.ico. Resizing uses sips; ICNS/ICO containers preserve the PNG payloads. No pixel recoloring was applied.
-
-Prompt: a whole solid minimalist white gamepad in a rounded-rectangle graphic badge, stylized CONSOLE LINK footer and a small three-triangle Triforce homage in the upper-right corner. Only white and nearly black; no dot pattern, gradients, shadows, textures or 3D.
+Prompt: “Professional minimal flat monochrome logo for Console Link. Solid white gamepad,
+soft handles, left dark D-pad, right dark Triforce. Uniform dark background. No frame,
+lettering, glow, shadow, gradient or texture. Crisp edges and readable at small sizes.”

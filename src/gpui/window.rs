@@ -511,8 +511,9 @@ pub fn set_application_icon(window: &Window) -> Result<(), String> {
         },
         core::PCWSTR,
     };
-    let RawWindowHandle::Win32(handle) =
-        window.window_handle().map_err(|e| e.to_string())?.as_raw()
+    let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)
+        .map_err(|e| e.to_string())?
+        .as_raw()
     else {
         return Err("Expected a Windows window".into());
     };

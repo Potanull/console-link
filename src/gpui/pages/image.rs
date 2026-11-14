@@ -278,7 +278,7 @@ impl Desktop {
             UpscaleMode::Standard => {}
         }
         if let Some(recipe) = &self.recipe {
-            enhancements = enhancements.child(hint(&format!(
+            enhancements = enhancements.child(hint(format!(
                 "Источник: {} × {} → обработка: {} × {} · {:?}",
                 recipe.frame.width,
                 recipe.frame.height,

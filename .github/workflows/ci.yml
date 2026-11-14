@@ -82,6 +82,8 @@ jobs:
         if: ${{ !inputs.nintendo_components_only }}
         timeout-minutes: 20
         run: cargo test --locked --target ${{ matrix.target }}
+      - name: Check library without desktop dependencies
+        run: cargo check --locked --no-default-features --lib --target ${{ matrix.target }}
       - name: Build the GPUI application
         run: cargo build --locked --target ${{ matrix.target }} --bin console-link
       - name: Native GPUI video smoke
@@ -96,6 +98,13 @@ jobs:
           name: gpui-smoke-diagnostics-${{ matrix.target }}
           path: ${{ runner.temp }}/console-link-gpui-smoke.log
           if-no-files-found: ignore
+      - name: Upload Windows development binary for review
+        if: github.event_name == 'pull_request' && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-link-windows-review
+          path: target/${{ matrix.target }}/debug/console-link.exe
+          retention-days: 3
       - name: Verify private Nintendo component installation
         timeout-minutes: 8
         shell: bash

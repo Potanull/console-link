@@ -54,3 +54,9 @@ gh workflow run release.yml --ref main -f build_run_id=123456789 -f release_tag=
 The check script reports elapsed time for each step. Compare warm runs using the
 same toolchain, hardware and target directory; first-time dependency downloads
 and different cache states are not a valid before/after performance comparison.
+
+A PR with the `preview` label also builds a portable Windows preview in parallel.
+Add the label before pushing. Ordinary PRs avoid this extra optimized build.
+Do not distribute a raw GPUI debug binary: GPUI 0.2.2 loads HLSL from the original
+build machine's Cargo directory when debug assertions are enabled. Preview and
+release profiles embed compiled shaders and are portable.

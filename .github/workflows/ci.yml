@@ -141,10 +141,14 @@ jobs:
           borderless = [line for line in result.stdout.splitlines() if 'mode=Borderless fullscreen=false' in line]
           if not borderless:
               raise SystemExit('Borderless mode was not confirmed outside native fullscreen')
-          for line in borderless:
-              sizes = re.findall(r'Size \{ ([0-9.]+)px × ([0-9.]+)px \}', line)
-              if len(sizes) >= 2 and sizes[0] != sizes[1]:
-                  raise SystemExit(f'Borderless native bounds and GPUI viewport differ: {line}')
+          # Native style changes notify GPUI on the next event-loop turn.
+          # Check the settled sample, while rejecting persistent viewport drift.
+          line = borderless[-1]
+          sizes = re.findall(r'Size \{ ([0-9.]+)px × ([0-9.]+)px \}', line)
+          if len(sizes) < 2:
+              raise SystemExit(f'Could not parse borderless native bounds and viewport: {line}')
+          if sizes[0] != sizes[1]:
+              raise SystemExit(f'Borderless native bounds and GPUI viewport differ: {line}')
           PY
       - name: Upload GPUI smoke diagnostics on failure
         if: failure()

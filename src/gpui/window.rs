@@ -377,7 +377,7 @@ mod native {
             )
             .map_err(|e| e.to_string())?;
         }
-        Ok(())
+        notify_viewport_after_update(w)
     }
     pub fn borderless(w: &Window) -> Result<(), String> {
         let w = hwnd(w)?;
@@ -407,6 +407,31 @@ mod native {
                 r.right - r.left,
                 r.bottom - r.top,
                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        notify_viewport_after_update(w)
+    }
+    fn notify_viewport_after_update(w: HWND) -> Result<(), String> {
+        use windows::Win32::Foundation::{LPARAM, RECT, WPARAM};
+        let mut rect = RECT::default();
+        // SAFETY: live HWND and writable client rectangle; posting defers GPUI's resize callback beyond its borrowed Window update.
+        unsafe {
+            GetClientRect(w, &mut rect).map_err(|e| e.to_string())?;
+            let width = u16::try_from(rect.right - rect.left)
+                .map_err(|_| "Ширина окна не помещается в WM_SIZE.")?;
+            let height = u16::try_from(rect.bottom - rect.top)
+                .map_err(|_| "Высота окна не помещается в WM_SIZE.")?;
+            let state = if IsZoomed(w).as_bool() {
+                SIZE_MAXIMIZED
+            } else {
+                SIZE_RESTORED
+            };
+            PostMessageW(
+                Some(w),
+                WM_SIZE,
+                WPARAM(state as usize),
+                LPARAM((u32::from(width) | (u32::from(height) << 16)) as isize),
             )
             .map_err(|e| e.to_string())?;
         }

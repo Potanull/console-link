@@ -26,6 +26,7 @@ pub struct VideoRenderer {
     format: wgpu::TextureFormat,
     warning: Option<String>,
     effective: UpscaleSettings,
+    effective_target: [u32; 2],
     background: [u8; 3],
 }
 
@@ -39,6 +40,7 @@ impl VideoRenderer {
             format,
             warning: None,
             effective: UpscaleSettings::default(),
+            effective_target: [1, 1],
             background: [0, 0, 0],
         })
     }
@@ -66,6 +68,10 @@ impl VideoRenderer {
         self.effective
     }
 
+    pub fn effective_target(&self) -> [u32; 2] {
+        self.effective_target
+    }
+
     pub fn warning(&self) -> Option<&str> {
         self.warning.as_deref()
     }
@@ -90,6 +96,12 @@ impl VideoRenderer {
             viewport[2].round().max(1.0) as u32,
             viewport[3].round().max(1.0) as u32,
         ];
+        let viewport_target = target;
+        let target = frame.map_or(target, |frame| {
+            settings
+                .output_resolution
+                .target(target, [frame.width, frame.height])
+        });
         let mut effective = settings;
         effective.mode = UpscaleMode::Standard;
         let enhanced = if let Some(frame) = frame {
@@ -147,6 +159,7 @@ impl VideoRenderer {
             false
         };
         self.effective = effective;
+        self.effective_target = if enhanced { target } else { viewport_target };
         if !enhanced && let Some(frame) = frame {
             self.grade.update(device, queue, frame, color, original);
         }
@@ -287,6 +300,62 @@ mod tests {
     }
 
     #[test]
+    fn fixed_processing_resolution_is_used_independently_of_window_size() {
+        let (device, queue) = request_device().unwrap();
+        let mut renderer = VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8Unorm).unwrap();
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Fixed output regression"),
+            size: wgpu::Extent3d {
+                width: 16,
+                height: 9,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let frame = Arc::new(VideoFrame {
+            width: 1280,
+            height: 720,
+            rgba: vec![128; 1280 * 720 * 4],
+            timestamp_ns: 0,
+        });
+        let view = texture.create_view(&Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let settings = UpscaleSettings {
+            mode: UpscaleMode::Nis,
+            output_resolution: crate::upscale::OutputResolution::Qhd,
+            ..Default::default()
+        };
+        renderer
+            .draw(
+                &device,
+                &queue,
+                &view,
+                &mut encoder,
+                Some(&frame),
+                ColorSettings::default(),
+                false,
+                settings,
+                [0., 0., 16., 9.],
+            )
+            .unwrap();
+        assert_eq!(renderer.effective_settings().mode, UpscaleMode::Nis);
+        assert_eq!(renderer.effective_target(), [2560, 1440]);
+        assert!(renderer.warning().is_none());
+        let submission = queue.submit([encoder.finish()]);
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(30)),
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn unsupported_nis_keeps_video_and_exports_the_effective_standard_recipe() {
         let (device, queue) = request_device().unwrap();
         let mut renderer = VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8Unorm).unwrap();
@@ -330,6 +399,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(renderer.effective_settings().mode, UpscaleMode::Standard);
+        assert_eq!(renderer.effective_target(), [4, 4]);
         assert!(renderer.warning().unwrap().contains("2x"));
         assert!(
             renderer.spatial.is_none(),

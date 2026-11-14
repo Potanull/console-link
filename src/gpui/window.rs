@@ -497,6 +497,56 @@ mod native {
     }
 }
 
+/// Use the executable's shared icon handles for both taskbar and title bar.
+#[cfg(target_os = "windows")]
+pub fn set_application_icon(window: &Window) -> Result<(), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows::{
+        Win32::{
+            Foundation::{HINSTANCE, LPARAM, WPARAM},
+            System::LibraryLoader::GetModuleHandleW,
+            UI::WindowsAndMessaging::{
+                IMAGE_ICON, LR_SHARED, LoadImageW, SendMessageW, WM_SETICON,
+            },
+        },
+        core::PCWSTR,
+    };
+    let RawWindowHandle::Win32(handle) = HasWindowHandle::window_handle(window)
+        .map_err(|e| e.to_string())?
+        .as_raw()
+    else {
+        return Err("Expected a Windows window".into());
+    };
+    let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
+    unsafe {
+        let module = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+        // MAKEINTRESOURCEW(1): this is an integer resource identifier, not a dereferenceable string.
+        // winresource embeds the main icon under resource ID 1.
+        for (kind, size) in [(0, 16), (1, 32)] {
+            let icon = LoadImageW(
+                Some(HINSTANCE(module.0)),
+                PCWSTR(std::ptr::without_provenance(1)),
+                IMAGE_ICON,
+                size,
+                size,
+                LR_SHARED,
+            )
+            .map_err(|e| e.to_string())?;
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(kind)),
+                Some(LPARAM(icon.0 as isize)),
+            );
+        }
+    }
+    Ok(())
+}
+#[cfg(not(target_os = "windows"))]
+pub fn set_application_icon(_: &Window) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

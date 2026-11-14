@@ -13,7 +13,7 @@ impl Default for CapturePreferences {
     fn default() -> Self {
         Self {
             automatic: true,
-            preferred_fps: config::MAX_FPS,
+            preferred_fps: config::DEFAULT_FPS,
         }
     }
 }
@@ -49,7 +49,7 @@ pub fn choose_mode(
                 }
             };
             let full_hd = |mode: &VideoMode| {
-                mode.width == config::MAX_WIDTH && mode.height == config::MAX_HEIGHT
+                mode.width == config::DEFAULT_WIDTH && mode.height == config::DEFAULT_HEIGHT
             };
             (a_fps > target)
                 .cmp(&(b_fps > target))
@@ -216,7 +216,7 @@ mod tests {
     fn manual_mode_must_be_explicit_valid_and_advertised() {
         let preferences = CapturePreferences {
             automatic: false,
-            preferred_fps: config::MAX_FPS,
+            preferred_fps: config::DEFAULT_FPS,
         };
         let selected = mode(1280, 720, 30, 1);
         let modes = [mode(1920, 1080, 60, 1), selected.clone()];
@@ -238,8 +238,8 @@ mod tests {
             mode(0, 1080, 60, 1),
             mode(1920, 1080, 60, 0),
             mode(1920, 1080, 0, 1),
-            mode(3840, 2160, 60, 1),
-            mode(1920, 1080, 120, 1),
+            mode(7680, 4320, 60, 1),
+            mode(1920, 1080, 240, 1),
         ];
         let mut modes = invalid.to_vec();
         modes.push(valid.clone());
@@ -271,5 +271,26 @@ mod tests {
             modes.rotate_left(1);
             modes.reverse();
         }
+    }
+    #[test]
+    fn advertised_4k_and_1440p_high_refresh_are_selectable_without_changing_defaults() {
+        let hd = mode(1920, 1080, 60, 1);
+        let qhd = mode(2560, 1440, 120, 1);
+        let uhd = mode(3840, 2160, 60, 1);
+        let modes = [hd.clone(), qhd.clone(), uhd.clone()];
+        assert_eq!(
+            choose_mode(&modes, &CapturePreferences::default(), None),
+            Some(hd)
+        );
+        let manual = CapturePreferences {
+            automatic: false,
+            preferred_fps: 120,
+        };
+        assert_eq!(choose_mode(&modes, &manual, Some(&qhd)), Some(qhd));
+        assert_eq!(choose_mode(&modes, &manual, Some(&uhd)), Some(uhd));
+        assert_eq!(
+            choose_mode(&modes, &manual, Some(&mode(3840, 2160, 120, 1))),
+            None
+        );
     }
 }

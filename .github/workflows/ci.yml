@@ -82,6 +82,8 @@ jobs:
         if: ${{ !inputs.nintendo_components_only }}
         timeout-minutes: 20
         run: cargo test --locked --target ${{ matrix.target }}
+      - name: Check library without desktop dependencies
+        run: cargo check --locked --no-default-features --lib --target ${{ matrix.target }}
       - name: Build the GPUI application
         run: cargo build --locked --target ${{ matrix.target }} --bin console-link
       - name: Native GPUI video smoke
@@ -102,6 +104,33 @@ jobs:
         env:
           RUNTIME_TEST_DIR: ${{ runner.temp }}/console-link-nintendo-check
         run: cargo run --locked --target ${{ matrix.target }} --bin console-link -- --install-nintendo-runtime "$RUNTIME_TEST_DIR"
+
+  preview:
+    # Opt in with a preview label before pushing; ordinary PR checks stay fast.
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview')
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust compiler
+        run: rustup toolchain install "$env:RUSTUP_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-preview
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build portable optimized preview
+        run: cargo build --locked --profile preview --bin console-link
+      - name: Verify portable preview
+        run: python scripts/smoke-native.py target/preview/console-link.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: console-link-windows-preview
+          path: target/preview/console-link.exe
+          overwrite: true
+          retention-days: 3
 
   package:
     # Build release candidates alongside tests, never for every PR iteration.

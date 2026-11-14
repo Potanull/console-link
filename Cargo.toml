@@ -6,10 +6,19 @@ edition = "2024"
 license = "MIT"
 description = "A focused desktop companion for HDMI capture cards"
 
+[features]
+default = ["desktop"]
+desktop = ["dep:gpui", "dep:unicode-segmentation", "dep:anyhow"]
+
+[[bin]]
+name = "console-link"
+path = "src/main.rs"
+required-features = ["desktop"]
+
 [dependencies]
-anyhow = "1"
-gpui = { version = "=0.2.2", default-features = false, features = ["font-kit", "runtime_shaders", "windows-manifest"] }
-unicode-segmentation = "1"
+anyhow = { version = "1", optional = true }
+gpui = { version = "=0.2.2", optional = true, default-features = false, features = ["font-kit", "runtime_shaders", "windows-manifest"] }
+unicode-segmentation = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 directories = "6"
@@ -42,7 +51,7 @@ block2 = "0.6"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.62"
 windows58 = { package = "windows", version = "0.58", features = ["Win32_Foundation", "Win32_Graphics_Direct3D12", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_Security"] }
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_Media_MediaFoundation", "Win32_Media_KernelStreaming", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_Security", "Win32_Storage_FileSystem"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_Media_MediaFoundation", "Win32_Media_KernelStreaming", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_Security", "Win32_Storage_FileSystem"] }
 
 [profile.release]
 lto = "thin"
@@ -54,3 +63,10 @@ winresource = { version = "0.1", default-features = false }
 
 [profile.dev.package.console-link]
 opt-level = 2
+
+# Fast optimized previews; shipping releases retain ThinLTO and one codegen unit.
+[profile.preview]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

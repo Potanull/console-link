@@ -403,7 +403,7 @@ impl Desktop {
         renderer.set_background(if self.playing {
             [0, 0, 0]
         } else {
-            [49, 51, 56]
+            [16, 16, 16]
         });
         match presenter.present(|device, queue, view, encoder| {
             renderer.draw(
@@ -537,14 +537,13 @@ impl Desktop {
         });
         cx.notify();
     }
-    fn shutdown(&mut self, window: &mut Window, _: &mut Context<Self>) {
+    fn shutdown(&mut self, _window: &mut Window, _: &mut Context<Self>) {
         if self.closed {
             return;
         }
         self.closed = true;
         self.cursor = CursorIdle::default();
-        self.artwork.clear(window);
-        let _ = window.drop_image(self.brand.clone());
+        self.artwork.stop();
         self.renderer = None;
         self.presenter = None;
         self.runtime.close();
@@ -655,7 +654,7 @@ impl Desktop {
                     .child(
                         div()
                             .text_size(px(14.))
-                            .text_color(rgb(0xb5bac1))
+                            .text_color(rgb(0xb5b5b5))
                             .child("Выбери карту справа и подключи консоль"),
                     ),
             );
@@ -674,7 +673,7 @@ impl Desktop {
             .h_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x2b2d31));
+            .bg(rgb(0x171717));
         let mut brand = div()
             .h(px(72.))
             .flex_shrink_0()
@@ -682,8 +681,11 @@ impl Desktop {
             .flex()
             .gap_3()
             .items_center()
-            .bg(rgb(0x232428))
+            .bg(rgb(0x101010))
             .child(img(self.brand.clone()).size(px(48.)).rounded_xl());
+        if compact {
+            brand = brand.justify_center();
+        }
         if !compact {
             brand = brand.child(
                 div()
@@ -699,7 +701,7 @@ impl Desktop {
                     .child(
                         div()
                             .text_size(px(11.))
-                            .text_color(rgb(0x949ba4))
+                            .text_color(rgb(0x949494))
                             .child("Игровое пространство"),
                     ),
             );
@@ -719,14 +721,14 @@ impl Desktop {
                 .mb_1()
                 .h(px(44.))
                 .px_3()
-                .rounded_md()
+                .rounded_full()
                 .flex()
                 .items_center()
                 .gap_3()
                 .cursor_pointer()
-                .bg(rgb(if selected { 0x404249 } else { 0x2b2d31 }))
-                .text_color(rgb(if selected { 0xffffff } else { 0xb5bac1 }))
-                .hover(|s| s.bg(rgb(0x35373c)).text_color(rgb(0xffffff)))
+                .bg(rgb(if selected { 0x292929 } else { 0x171717 }))
+                .text_color(rgb(if selected { 0xffffff } else { 0xb5b5b5 }))
+                .hover(|s| s.bg(rgb(0x242424)).text_color(rgb(0xffffff)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.page = page;
                     this.selection = None;
@@ -736,6 +738,9 @@ impl Desktop {
                     cx.notify();
                 }))
                 .child(svg().path(icon).size(px(24.)));
+            if compact {
+                item = item.justify_center().px_0();
+            }
             if !compact {
                 item = item.child(
                     div()
@@ -754,7 +759,10 @@ impl Desktop {
             .flex()
             .items_center()
             .gap_2()
-            .bg(rgb(0x232428));
+            .bg(rgb(0x101010));
+        if compact {
+            footer = footer.justify_center();
+        }
         let avatar = account.as_ref().and_then(|a| a.avatar_url.clone());
         if let Some(image) = self.artwork_image(avatar, window, cx) {
             footer = footer.child(img(image).size(px(32.)).rounded_full());
@@ -763,7 +771,8 @@ impl Desktop {
                 div()
                     .size(px(32.))
                     .rounded_full()
-                    .bg(rgb(0x5865f2))
+                    .bg(rgb(0xf2f2f2))
+                    .text_color(rgb(0x101010))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -787,7 +796,7 @@ impl Desktop {
                     .child(
                         div()
                             .text_size(px(10.))
-                            .text_color(rgb(0x949ba4))
+                            .text_color(rgb(0x949494))
                             .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
                     ),
             );
@@ -809,10 +818,10 @@ impl Desktop {
             .flex()
             .items_center()
             .gap_3()
-            .bg(rgb(0x313338))
+            .bg(rgb(0x101010))
             .border_b_1()
-            .border_color(rgb(0x27282c))
-            .child(svg().path(icon).size(px(22.)).text_color(rgb(0x949ba4)))
+            .border_color(rgb(0x242424))
+            .child(svg().path(icon).size(px(22.)).text_color(rgb(0x949494)))
             .child(
                 div()
                     .text_size(px(16.))
@@ -826,6 +835,7 @@ impl Desktop {
 impl Render for Desktop {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.redraw = true;
+        self.artwork.begin_frame();
         let mut root = div()
             .id("console-link")
             .key_context("ConsoleDesktop")
@@ -833,7 +843,7 @@ impl Render for Desktop {
             .relative()
             .size_full()
             .overflow_hidden()
-            .text_color(rgb(0xededf0))
+            .text_color(rgb(0xeeeeee))
             .font_family("Inter")
             .on_action(cx.listener(Self::toggle_overlay))
             .on_action(cx.listener(Self::escape))
@@ -846,7 +856,7 @@ impl Render for Desktop {
             .on_action(cx.listener(Self::stop_action))
             .on_action(cx.listener(Self::quit));
         if self.presenter.is_none() || self.renderer.is_none() {
-            root = root.bg(rgb(0x08090b));
+            root = root.bg(rgb(0x090909));
         }
         if !self.playing || self.overlay {
             let compact = self.playing
@@ -872,12 +882,12 @@ impl Render for Desktop {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .bg(rgb(0x2b2d31));
+                    .bg(rgb(0x171717));
                 setup = setup.child(
                     div()
                         .text_size(px(12.))
                         .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0xb5bac1))
+                        .text_color(rgb(0xb5b5b5))
                         .child("ПОДКЛЮЧЕНИЕ"),
                 );
                 if let Some(message) = message {
@@ -885,7 +895,7 @@ impl Render for Desktop {
                         div()
                             .p_3()
                             .rounded_md()
-                            .bg(rgb(0x232428))
+                            .bg(rgb(0x101010))
                             .text_size(px(12.))
                             .child(message),
                     );
@@ -922,7 +932,7 @@ impl Render for Desktop {
                         div()
                             .p_3()
                             .rounded_md()
-                            .bg(rgb(0x2b2d31))
+                            .bg(rgb(0x171717))
                             .text_size(px(13.))
                             .child(message),
                     );
@@ -959,7 +969,7 @@ impl Render for Desktop {
                         .top_0()
                         .bottom_0()
                         .w(px(f32::from(window.viewport_size().width).min(660.)))
-                        .bg(rgb(0x313338))
+                        .bg(rgb(0x101010))
                         .shadow_xl()
                         .child(layout),
                 )
@@ -997,14 +1007,14 @@ impl Render for Desktop {
                     .w(px(260.))
                     .p_4()
                     .rounded_xl()
-                    .bg(rgba(0x16181bee))
+                    .bg(rgba(0x181818ee))
                     .child(div().mb_2().child(if self.runtime.settings.muted {
                         "Звук выключен".into()
                     } else {
                         format!("Громкость {}%", (volume * 100.).round())
                     }))
                     .child(
-                        div().h(px(4.)).rounded_full().bg(rgb(0x45484d)).child(
+                        div().h(px(4.)).rounded_full().bg(rgb(0x494949)).child(
                             div()
                                 .h_full()
                                 .w(relative(volume))

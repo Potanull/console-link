@@ -468,7 +468,7 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), rgb(0x949ba4).into())
+            (input.placeholder.clone(), rgb(0x858585).into())
         } else {
             (content, style.color)
         };
@@ -550,7 +550,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x5865f255),
+                    rgba(0xffffff30),
                 )),
                 None,
             )
@@ -626,9 +626,9 @@ impl Render for TextField {
             .min_w(px(0.))
             .rounded_md()
             .border_1()
-            .border_color(rgb(0x1e1f22))
-            .bg(rgb(0x1e1f22))
-            .text_color(rgb(0xf2f3f5))
+            .border_color(rgb(0x101010))
+            .bg(rgb(0x101010))
+            .text_color(rgb(0xededed))
             .line_height(px(22.))
             .text_size(px(14.))
             .child(
@@ -748,17 +748,17 @@ pub fn button(
         .items_center()
         .justify_center()
         .px_4()
-        .py(px(6.))
-        .min_h(px(32.))
-        .rounded_sm()
+        .py(px(7.))
+        .min_h(px(36.))
+        .rounded_full()
         .border_1()
-        .border_color(rgb(if primary { 0x5865f2 } else { 0x4e5058 }))
-        .bg(rgb(if primary { 0x5865f2 } else { 0x4e5058 }))
-        .text_color(rgb(0xf2f3f5))
+        .border_color(rgb(if primary { 0xededed } else { 0x303030 }))
+        .bg(rgb(if primary { 0xededed } else { 0x202020 }))
+        .text_color(rgb(if primary { 0x101010 } else { 0xededed }))
         .text_size(px(14.))
         .font_weight(gpui::FontWeight::MEDIUM)
         .cursor_pointer()
-        .hover(move |s| s.bg(rgb(if primary { 0x4752c4 } else { 0x6d6f78 })))
+        .hover(move |s| s.bg(rgb(if primary { 0xd7d7d7 } else { 0x303030 })))
         .on_click(on_click)
         .child(label.into())
         .into_any_element()
@@ -780,7 +780,7 @@ pub fn toggle(
         .py_2()
         .cursor_pointer()
         .text_size(px(14.))
-        .text_color(rgb(0xf2f3f5))
+        .text_color(rgb(0xededed))
         .child(label.into())
         .child(
             div()
@@ -790,7 +790,7 @@ pub fn toggle(
                 .h(px(21.))
                 .px(px(3.))
                 .rounded_full()
-                .bg(rgb(if checked { 0x5865f2 } else { 0x80848e }))
+                .bg(rgb(if checked { 0x606060 } else { 0x303030 }))
                 .when(checked, |s| s.justify_end())
                 .child(div().size(px(15.)).rounded_full().bg(rgb(0xffffff))),
         )
@@ -807,8 +807,8 @@ pub fn row(label: impl Into<SharedString>, value: impl Into<SharedString>) -> An
         .gap_3()
         .py_1()
         .text_size(px(13.))
-        .child(div().text_color(rgb(0xb5bac1)).child(label.into()))
-        .child(div().text_color(rgb(0xf2f3f5)).child(value.into()))
+        .child(div().text_color(rgb(0xa3a3a3)).child(label.into()))
+        .child(div().text_color(rgb(0xededed)).child(value.into()))
         .into_any_element()
 }
 
@@ -857,7 +857,7 @@ pub fn slider(
                 .top(px(12.))
                 .h(px(4.))
                 .rounded_full()
-                .bg(rgb(0x4e5058)),
+                .bg(rgb(0x303030)),
         )
         .child(
             div()
@@ -867,7 +867,7 @@ pub fn slider(
                 .w(relative(fraction))
                 .h(px(4.))
                 .rounded_full()
-                .bg(rgb(0x5865f2)),
+                .bg(rgb(0xededed)),
         )
         .child(
             div()
@@ -942,7 +942,7 @@ pub fn vertical_slider(
                 .bottom_0()
                 .w(px(4.))
                 .rounded_full()
-                .bg(rgb(0x4e5058)),
+                .bg(rgb(0x303030)),
         )
         .child(
             div()
@@ -951,7 +951,7 @@ pub fn vertical_slider(
                 .right_0()
                 .top(relative(0.5))
                 .h(px(1.))
-                .bg(rgb(0x80848e)),
+                .bg(rgb(0x777777)),
         )
         .child(
             div()

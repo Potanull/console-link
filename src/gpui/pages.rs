@@ -145,8 +145,8 @@ impl Desktop {
                 .max_h(px(220.))
                 .overflow_y_scroll()
                 .p_2()
-                .rounded_md()
-                .bg(rgb(0x1e1f22));
+                .rounded_lg()
+                .bg(rgb(0x101010));
             for (i, (value, name)) in choices.into_iter().enumerate() {
                 list = list.child(widgets::button(
                     (id, i),
@@ -277,7 +277,7 @@ impl Desktop {
             .child(numeric(cx,"gain","Громкость, %",self.runtime.settings.gain*100.,0.,100.,|s,v|s.runtime.settings.gain=v/100.))
             .child(switch(cx,"mute","Выключить звук",self.runtime.settings.muted,|s,v|s.runtime.settings.muted=v))
             .child(widgets::row("Уровень сигнала",format!("{:.0}%",peak*100.)))
-            .child(div().h(px(5.)).rounded_full().bg(rgb(0x4e5058)).child(div().h_full().w(relative(peak)).rounded_full().bg(rgb(0xf2f3f5))))
+            .child(div().h(px(5.)).rounded_full().bg(rgb(0x303030)).child(div().h_full().w(relative(peak)).rounded_full().bg(rgb(0xededed))))
             .child(numeric(cx,"sync","Коррекция синхронизации, мс",self.runtime.settings.sync_ms as f32,-500.,500.,|s,v|s.runtime.settings.sync_ms=v.round() as i32))
             .child(hint("Плюс задерживает звук, минус задерживает видео. HDMI-задержка самой карты не меняется."));
         volume = volume.child(widgets::button(
@@ -332,7 +332,7 @@ impl Desktop {
                     .child(
                         div()
                             .text_size(px(10.))
-                            .text_color(rgb(0xb5bac1))
+                            .text_color(rgb(0xa3a3a3))
                             .child(format!("{value:+.0}")),
                     )
                     .child(widgets::vertical_slider(
@@ -351,7 +351,7 @@ impl Desktop {
                     .child(
                         div()
                             .text_size(px(10.))
-                            .text_color(rgb(0xb5bac1))
+                            .text_color(rgb(0xa3a3a3))
                             .child(freq),
                     ),
             );
@@ -746,7 +746,7 @@ impl Desktop {
                             .justify_center()
                             .size(px(56.))
                             .rounded_full()
-                            .bg(rgb(0x5865f2))
+                            .bg(rgb(0x303030))
                             .child("D"),
                     );
                 }
@@ -1102,7 +1102,7 @@ impl Desktop {
                 .h(px(64.))
                 .gap(px(1.))
                 .rounded_md()
-                .bg(rgb(0x1e1f22))
+                .bg(rgb(0x101010))
                 .px_2()
                 .py_2();
             for sample in &self.runtime.monitor.samples {
@@ -1117,7 +1117,7 @@ impl Desktop {
                         .min_w(px(1.))
                         .h(relative((value / maximum).clamp(0., 1.)))
                         .rounded_sm()
-                        .bg(rgb(0x80848e)),
+                        .bg(rgb(0x777777)),
                 );
             }
             about = about.child(caption(title)).child(bars);
@@ -1165,13 +1165,13 @@ fn card(title: &str, description: &str) -> gpui::Div {
         .p_4()
         .rounded_lg()
         .border_1()
-        .border_color(rgb(0x383a40))
-        .bg(rgb(0x2b2d31))
+        .border_color(rgb(0x292929))
+        .bg(rgb(0x171717))
         .child(
             div()
                 .text_size(px(16.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(0xf2f3f5))
+                .text_color(rgb(0xededed))
                 .child(title.to_owned()),
         )
         .when(!description.is_empty(), |s| {
@@ -1181,7 +1181,7 @@ fn card(title: &str, description: &str) -> gpui::Div {
 fn text(value: impl Into<SharedString>) -> AnyElement {
     div()
         .text_size(px(14.))
-        .text_color(rgb(0xf2f3f5))
+        .text_color(rgb(0xededed))
         .child(value.into())
         .into_any_element()
 }
@@ -1189,14 +1189,14 @@ fn caption(value: impl Into<SharedString>) -> AnyElement {
     div()
         .text_size(px(12.))
         .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(rgb(0xb5bac1))
+        .text_color(rgb(0xa3a3a3))
         .child(value.into())
         .into_any_element()
 }
 fn hint(value: impl Into<SharedString>) -> AnyElement {
     div()
         .text_size(px(13.))
-        .text_color(rgb(0xb5bac1))
+        .text_color(rgb(0xa3a3a3))
         .child(value.into())
         .into_any_element()
 }

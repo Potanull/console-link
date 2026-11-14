@@ -1,3 +1,6 @@
+pub mod installation;
+mod runtime_config;
+
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -76,14 +79,82 @@ fn find_helper(
     executable: &std::path::Path,
     local: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
+    helper_locations(executable, local).find(|p| {
+        p.join("node_modules/nxapi/bin/nxapi.js").is_file() && p.join("data/persist").is_dir()
+    })
+}
+
+fn helper_locations<'a>(
+    executable: &'a std::path::Path,
+    local: &'a std::path::Path,
+) -> impl Iterator<Item = std::path::PathBuf> + 'a {
     executable
         .ancestors()
         .skip(1)
         .map(|p| p.join(".local/nintendo-helper"))
         .chain(std::iter::once(local.to_owned()))
-        .find(|p| {
-            p.join("node_modules/nxapi/bin/nxapi.js").is_file() && p.join("data/persist").is_dir()
+}
+
+fn data_directory(
+    executable: &std::path::Path,
+    local: &std::path::Path,
+    legacy: Option<&std::path::Path>,
+) -> std::path::PathBuf {
+    legacy
+        .map(std::path::Path::to_owned)
+        .or_else(|| {
+            helper_locations(executable, local).find(|base| base.join("data/persist").is_dir())
         })
+        .unwrap_or_else(|| local.to_owned())
+        .join("data")
+}
+
+pub fn helper_directory() -> Result<std::path::PathBuf, String> {
+    directories::BaseDirs::new()
+        .map(|dirs| dirs.data_local_dir().join("ConsoleLink/nintendo-helper"))
+        .ok_or_else(|| "Каталог компонентов Nintendo недоступен.".into())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn resolve_macos_node(
+    path: Option<&std::ffi::OsStr>,
+    executable: impl Fn(&std::path::Path) -> bool,
+) -> std::path::PathBuf {
+    path.into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|directory| directory.join("node"))
+        .chain(["/opt/homebrew/bin/node", "/usr/local/bin/node"].map(std::path::PathBuf::from))
+        .find(|candidate| executable(candidate))
+        .unwrap_or_else(|| "node".into())
+}
+
+#[cfg(target_os = "macos")]
+fn executable_file(candidate: &std::path::Path) -> bool {
+    use std::{
+        ffi::{CString, c_char, c_int},
+        os::unix::ffi::OsStrExt,
+    };
+    unsafe extern "C" {
+        fn access(path: *const c_char, mode: c_int) -> c_int;
+    }
+    // Check this caller's execute access, including ACLs, not another user's mode bit.
+    candidate.is_file()
+        && CString::new(candidate.as_os_str().as_bytes()).is_ok_and(|path| {
+            // SAFETY: CString supplies a valid NUL-terminated path for this call; 1 is X_OK.
+            unsafe { access(path.as_ptr(), 1) == 0 }
+        })
+}
+
+fn node_program() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        // Finder's minimal PATH omits standard Homebrew and Node installers.
+        resolve_macos_node(std::env::var_os("PATH").as_deref(), executable_file)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "node".into()
+    }
 }
 
 /// Run only on a worker thread. No shell, credential arguments, or raw SDK error logging.
@@ -93,15 +164,26 @@ pub fn fetch() -> Result<Vec<Friend>, String> {
         process::{Command, Stdio},
         time::{Duration, Instant},
     };
-    let local = directories::BaseDirs::new()
-        .ok_or(FETCH_ERROR)?
-        .data_local_dir()
-        .join("ConsoleLink/nintendo-helper");
+    let local = helper_directory()?;
     let executable = std::env::current_exe().map_err(|_| FETCH_ERROR)?;
-    let base = find_helper(&executable, &local)
-        .ok_or("Локальный nxapi не найден. Проверь папку помощника Nintendo и сохранённый вход.")?;
-    let mut command = Command::new("node");
+    let legacy = find_helper(&executable, &local);
+    let data = data_directory(&executable, &local, legacy.as_deref());
+    let (node, base) = if let Some(managed) = installation::installed(&local) {
+        (managed.node, managed.package_directory)
+    } else {
+        (
+            node_program(),
+            legacy.ok_or(
+                "Компоненты Nintendo не установлены. Нажми «Установить компоненты Nintendo».",
+            )?,
+        )
+    };
+    let mut command = Command::new(node);
     command
+        .current_dir(&base)
+        .env_remove("NODE_OPTIONS")
+        .env_remove("NODE_PATH")
+        .env("CONSOLE_LINK_VERSION", env!("CARGO_PKG_VERSION"))
         .args([
             "-e",
             include_str!("../scripts/nintendo-presence.cjs"),
@@ -109,6 +191,7 @@ pub fn fetch() -> Result<Vec<Friend>, String> {
             "--console-link-presence",
         ])
         .arg(base)
+        .arg(data)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -155,6 +238,119 @@ pub fn fetch() -> Result<Vec<Friend>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn macos_node_resolver_preserves_path_before_installer_fallbacks() {
+        use std::path::Path;
+        let custom_path = std::env::join_paths(["/custom/bin", "/usr/bin", "/bin"]).unwrap();
+        let finder_path = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let chosen = resolve_macos_node(Some(&custom_path), |candidate| {
+            [
+                Path::new("/custom/bin/node"),
+                Path::new("/opt/homebrew/bin/node"),
+            ]
+            .contains(&candidate)
+        });
+        assert_eq!(chosen, Path::new("/custom/bin/node"));
+        for available in ["/opt/homebrew/bin/node", "/usr/local/bin/node"] {
+            assert_eq!(
+                resolve_macos_node(Some(&finder_path), |candidate| candidate
+                    == Path::new(available)),
+                Path::new(available)
+            );
+        }
+        assert_eq!(
+            resolve_macos_node(Some(&finder_path), |candidate| {
+                [
+                    Path::new("/opt/homebrew/bin/node"),
+                    Path::new("/usr/local/bin/node"),
+                ]
+                .contains(&candidate)
+            }),
+            Path::new("/opt/homebrew/bin/node")
+        );
+        assert_eq!(resolve_macos_node(None, |_| false), Path::new("node"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_node_candidates_require_caller_execute_access_and_regular_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "console-link-node-permission-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let node = root.join("node");
+        std::fs::write(&node, "").unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o610)).unwrap();
+        assert!(
+            !executable_file(&node),
+            "Owner lacks execute access even when the group has it"
+        );
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(executable_file(&node));
+        assert!(
+            !executable_file(&root),
+            "An executable directory is not Node"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_component_lock_contains_only_integrity_pinned_registry_packages() {
+        let package: serde_json::Value =
+            serde_json::from_str(include_str!("../packaging/nintendo/package.json")).unwrap();
+        assert_eq!(
+            package["dependencies"]["nxapi"],
+            runtime_config::NXAPI_VERSION
+        );
+        let lock: serde_json::Value =
+            serde_json::from_str(include_str!("../packaging/nintendo/package-lock.json")).unwrap();
+        for (name, package) in lock["packages"].as_object().unwrap() {
+            if name.is_empty() {
+                continue;
+            }
+            assert!(
+                package["resolved"]
+                    .as_str()
+                    .is_some_and(|url| url.starts_with("https://registry.npmjs.org/")),
+                "{name}"
+            );
+            assert!(
+                package["integrity"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("sha512-") && value.len() > 16),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn installing_runtime_does_not_change_an_existing_account_location() {
+        let root = std::env::temp_dir().join(format!(
+            "console-link-data-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let previous = root.join("project/.local/nintendo-helper");
+        std::fs::create_dir_all(previous.join("data/persist")).unwrap();
+        let executable = root.join("project/target/release/console-link");
+        let local = root.join("application-data");
+        assert_eq!(
+            data_directory(&executable, &local, None),
+            previous.join("data")
+        );
+        let selected_legacy = root.join("previously-selected");
+        assert_eq!(
+            data_directory(&executable, &local, Some(&selected_legacy)),
+            selected_legacy.join("data")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn cover_urls_are_public_nintendo_https_only() {
         assert!(valid_cover(

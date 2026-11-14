@@ -14,6 +14,24 @@ fn main() -> eframe::Result {
         platform::app_return::activate_existing();
         return Ok(());
     }
+    if let Some(directory) = argument_value("--install-nintendo-runtime") {
+        let directory = std::path::PathBuf::from(directory);
+        if !directory.is_absolute() {
+            eprintln!("Nintendo install check requires an absolute destination.");
+            std::process::exit(1);
+        }
+        let cancelled = console_link::nintendo::installation::Cancellation::default();
+        if let Err(error) = console_link::nintendo::installation::install(
+            &directory,
+            |stage| eprintln!("{}", stage.label()),
+            &cancelled,
+        ) {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        println!("Nintendo components verified.");
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--list-devices") {
         match console_link::capture::enumerate() {
             Ok(devices) => {

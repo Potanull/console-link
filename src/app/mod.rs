@@ -9,6 +9,7 @@ mod connection_diagnostics;
 mod equalizer;
 mod monitoring;
 mod nintendo;
+mod nintendo_install;
 mod pages;
 mod presentation;
 mod session;
@@ -92,7 +93,11 @@ impl Drop for Active {
 }
 
 enum Event {
-    Devices(Result<Devices, String>),
+    VideoDevices(Result<Vec<VideoDevice>, String>),
+    AudioDevices {
+        inputs: Result<Vec<AudioDeviceInfo>, String>,
+        outputs: Result<Vec<AudioDeviceInfo>, String>,
+    },
     Started(u64, Result<Active, String>),
     Screenshot(Result<String, String>),
 }
@@ -110,6 +115,7 @@ pub struct ConsoleApp {
     generation: u64,
     opening: bool,
     refreshing: bool,
+    refreshing_audio: bool,
     history: FrameHistory,
     displayed: Option<Arc<VideoFrame>>,
     texture: Option<egui::TextureHandle>,
@@ -257,6 +263,7 @@ impl ConsoleApp {
             generation: 0,
             opening: false,
             refreshing: false,
+            refreshing_audio: false,
             history: FrameHistory::new(
                 capture_config::HISTORY_BUDGET,
                 capture_config::HISTORY_TOLERANCE_NS,
@@ -412,7 +419,12 @@ impl ConsoleApp {
                 );
             }
         }
-        if !self.diagnostic_attempted && !self.refreshing {
+        let needs_audio = argument_value("--diagnose-audio-input").is_some()
+            || argument_value("--diagnose-audio-output").is_some();
+        if !self.diagnostic_attempted
+            && !self.refreshing
+            && (!needs_audio || !self.refreshing_audio)
+        {
             self.diagnostic_attempted = true;
             if self.connection_diagnostics.is_none() {
                 self.error = Some(

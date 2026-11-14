@@ -154,6 +154,14 @@ impl FramePacer {
     }
 }
 
+pub fn game_window_title(game: &str) -> String {
+    if game.is_empty() {
+        "Console Link - Game".into()
+    } else {
+        format!("{game} - Console Link")
+    }
+}
+
 pub fn mode_label(mode: GameWindowMode) -> &'static str {
     match mode {
         GameWindowMode::Windowed => "Оконный",
@@ -165,6 +173,12 @@ pub fn mode_label(mode: GameWindowMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn game_title_has_one_fallback_for_manual_and_nintendo_sources() {
+        assert_eq!(game_window_title(""), "Console Link - Game");
+        assert_eq!(game_window_title("Test Game"), "Test Game - Console Link");
+    }
 
     #[test]
     fn cursor_hides_after_four_seconds_and_returns_for_motion_controls_or_focus() {

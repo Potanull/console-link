@@ -132,13 +132,7 @@ impl Settings {
         settings.equalizer_presets.truncate(64);
         let mut names = std::collections::HashSet::new();
         settings.equalizer_presets.retain_mut(|preset| {
-            preset.name = preset
-                .name
-                .trim()
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(48)
-                .collect();
+            preset.name = crate::color::preset_name(&preset.name);
             preset.gains = crate::audio::equalizer::clean_gains(preset.gains);
             !preset.name.is_empty() && names.insert(preset.name.to_lowercase())
         });
@@ -241,6 +235,20 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn equalizer_preset_names_are_cleaned_before_duplicate_detection() {
+        let settings = Settings::parse(
+            r#"{"schema_version":1,"equalizer_presets":[
+                {"name":"A","gains":[0,0,0,0,0,0,0,0,0,0]},
+                {"name":"\u0000 A","gains":[1,1,1,1,1,1,1,1,1,1]}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.equalizer_presets.len(), 1);
+        assert_eq!(settings.equalizer_presets[0].name, "A");
+        assert_eq!(settings.equalizer_presets[0].gains, [0.0; 10]);
+    }
 
     #[test]
     fn nintendo_preferences_are_opt_in_and_preserve_manual_game() {

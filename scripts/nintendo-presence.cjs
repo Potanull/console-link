@@ -18,13 +18,19 @@ function filterFriends(input) {
       cover_url: online ? coverUrl(f.presence.game?.imageUri) : null};
   });
 }
-function main(base) {
-  const entry = path.join(base, 'node_modules/nxapi/bin/nxapi.js');
+function userAgent(version) {
+  return typeof version === 'string' && version.length > 0 && version.length <= 64 && !/[^0-9A-Za-z.+-]/.test(version) && /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$/.test(version)
+    ? `ConsoleLink/${version} (Nintendo presence integration)` : 'ConsoleLink';
+}
+function nxapiArguments(base, data = path.join(base, 'data')) {
+  return [path.join(base, 'node_modules/nxapi/bin/nxapi.js'), '--data-path', data, 'nso', 'friends', '--json'];
+}
+function main(base, data) {
   // Credentials and raw SDK responses never cross the helper protocol boundary.
-  execFile(process.execPath, [entry, '--data-path', path.join(base,'data'), 'nso','friends','--json'], {
+  execFile(process.execPath, nxapiArguments(base, data), {
     timeout:40000, maxBuffer:2*1024*1024, windowsHide:true,
     env:{...process.env, NXAPI_DEBUG_FILE:'0', DEBUG:'', NXAPI_SKIP_UPDATE_CHECK:'1',
-      NXAPI_USER_AGENT:'ConsoleLink/0.6.0 (Nintendo presence integration)'}
+      NXAPI_USER_AGENT:userAgent(process.env.CONSOLE_LINK_VERSION)}
   }, (error,stdout) => {
     let result = {ok:false};
     if (!error) {
@@ -33,5 +39,5 @@ function main(base) {
     process.stdout.write(JSON.stringify(result));
   });
 }
-module.exports = {filterFriends};
-if (require.main === module || process.argv[1] === '--console-link-presence') main(process.argv[2]);
+module.exports = {filterFriends, userAgent, nxapiArguments};
+if (require.main === module || process.argv[1] === '--console-link-presence') main(process.argv[2], process.argv[3]);

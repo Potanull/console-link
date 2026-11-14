@@ -21,6 +21,7 @@ url = "2"
 raw-window-handle = "0.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 unicode-normalization = "0.1"
+sha2 = "0.10"
 # Cargo.lock resolves gpu-allocator against windows 0.58 to match wgpu-hal.
 wgpu = { version = "27", default-features = false, features = ["metal", "dx12", "wgsl", "std"] }
 

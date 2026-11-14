@@ -82,7 +82,7 @@ impl ConsoleApp {
                 .char_limit(48)
                 .desired_width(ui.available_width()),
         );
-        let name = self.eq_name.trim().to_owned();
+        let name = console_link::color::preset_name(&self.eq_name);
         let duplicate = self
             .settings
             .equalizer_presets

@@ -11,6 +11,7 @@ pub(super) struct NintendoState {
     error: Option<String>,
     game: Option<String>,
     started_at: i64,
+    components: super::nintendo_install::ComponentInstall,
 }
 impl NintendoState {
     pub(super) fn preview(&mut self) {
@@ -21,7 +22,7 @@ impl NintendoState {
             game: Some("Example Adventure".into()),
             cover_url: None,
         }]));
-        self.refresh_game("0123456789abcdef");
+        self.select_profile(Some("0123456789abcdef"));
     }
     fn set_game(&mut self, game: Option<String>) {
         if self.game != game {
@@ -32,15 +33,15 @@ impl NintendoState {
                 .unwrap_or(0);
         }
     }
-    fn refresh_game(&mut self, id: &str) {
+    fn select_profile(&mut self, id: Option<&str>) {
         let fresh = self
             .last_success
             .is_some_and(|t| t.elapsed() < Duration::from_secs(90));
-        self.set_game(if fresh {
-            nintendo::selected_game(&self.friends, id).map(str::to_owned)
-        } else {
-            None
-        });
+        self.set_game(
+            id.filter(|_| fresh)
+                .and_then(|id| nintendo::selected_game(&self.friends, id))
+                .map(str::to_owned),
+        );
     }
     fn accept(&mut self, result: Result<Vec<Friend>, String>) {
         match result {
@@ -83,6 +84,9 @@ impl ConsoleApp {
         }
     }
     pub(super) fn poll_nintendo(&mut self, ctx: &egui::Context) {
+        if self.nintendo.components.poll() {
+            self.nintendo.last_attempt = None;
+        }
         if self.snapshot_path.is_some() && !std::env::args().any(|a| a == "--ui-nintendo-live") {
             return;
         }
@@ -112,7 +116,7 @@ impl ConsoleApp {
                 self.dirty = Some(Instant::now());
             }
             self.nintendo
-                .refresh_game(&self.settings.nintendo_friend_id);
+                .select_profile(Some(&self.settings.nintendo_friend_id));
             if self.nintendo.pending.is_none()
                 && self
                     .nintendo
@@ -131,13 +135,9 @@ impl ConsoleApp {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
         if self.active.is_some() && self.game_name() != before {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-                if self.game_name().is_empty() {
-                    "Console Link - Game".into()
-                } else {
-                    format!("{} - Console Link", self.game_name())
-                },
-            ));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(playback::game_window_title(
+                self.game_name(),
+            )));
         }
     }
     pub(super) fn nintendo_controls(&mut self, ui: &mut egui::Ui) {
@@ -153,6 +153,8 @@ impl ConsoleApp {
         );
 
         if self.settings.nintendo_enabled {
+            self.nintendo.components.show(ui);
+            ui.add_space(8.0);
             egui::ComboBox::from_id_salt("nintendo-friend")
                 .selected_text(
                     self.nintendo
@@ -193,14 +195,14 @@ impl ConsoleApp {
                 self.settings.nintendo_friend_id.clone(),
             )
         {
-            self.nintendo.set_game(None);
+            self.nintendo.select_profile(
+                self.settings
+                    .nintendo_enabled
+                    .then_some(self.settings.nintendo_friend_id.as_str()),
+            );
             if self.active.is_some() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(
-                    if self.game_name().is_empty() {
-                        "Console Link - Game".into()
-                    } else {
-                        format!("{} - Console Link", self.game_name())
-                    },
+                    playback::game_window_title(self.game_name()),
                 ));
             }
             self.dirty = Some(Instant::now());
@@ -212,6 +214,28 @@ impl ConsoleApp {
 mod tests {
     use super::*;
     #[test]
+    fn switching_profiles_with_the_same_game_preserves_the_timer() {
+        let mut state = NintendoState::default();
+        let friend = Friend {
+            id: "0123456789abcdef".into(),
+            name: "First".into(),
+            state: "PLAYING".into(),
+            game: Some("Same Game".into()),
+            cover_url: None,
+        };
+        let mut other = friend.clone();
+        other.id = "fedcba9876543210".into();
+        state.accept(Ok(vec![friend, other]));
+        state.select_profile(Some("0123456789abcdef"));
+        state.started_at = 123;
+        state.select_profile(Some("fedcba9876543210"));
+        assert_eq!(state.game.as_deref(), Some("Same Game"));
+        assert_eq!(state.started_at, 123);
+        state.select_profile(None);
+        assert!(state.game.is_none());
+    }
+
+    #[test]
     fn expired_response_and_switching_target_clear_the_game() {
         let mut state = NintendoState::default();
         state.accept(Ok(vec![Friend {
@@ -221,12 +245,12 @@ mod tests {
             game: Some("Test Game".into()),
             cover_url: None,
         }]));
-        state.refresh_game("0123456789abcdef");
+        state.select_profile(Some("0123456789abcdef"));
         assert_eq!(state.game.as_deref(), Some("Test Game"));
-        state.refresh_game("fedcba9876543210");
+        state.select_profile(Some("fedcba9876543210"));
         assert!(state.game.is_none());
         state.last_success = Some(Instant::now() - Duration::from_secs(91));
-        state.refresh_game("0123456789abcdef");
+        state.select_profile(Some("0123456789abcdef"));
         assert!(state.game.is_none());
     }
     #[test]

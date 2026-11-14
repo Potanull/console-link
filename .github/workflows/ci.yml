@@ -66,7 +66,7 @@ jobs:
 
   check:
     needs: validate
-    timeout-minutes: 25
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -86,22 +86,83 @@ jobs:
           rustup default stable
           rustup component add rustfmt clippy
           rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-gpui-${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       - name: Nintendo helper protocol tests
         run: node --test scripts/nintendo-presence.test.cjs
       - name: Formatting
         run: cargo fmt --check
       - name: Clippy
         run: cargo clippy --locked --all-targets --target ${{ matrix.target }} -- -D warnings
+      - name: Compile legacy rollback frontend
+        run: cargo check --locked --no-default-features --features legacy-ui --bin console-link-legacy --target ${{ matrix.target }}
       - name: Tests
         if: ${{ !inputs.nintendo_components_only }}
-        timeout-minutes: 5
+        timeout-minutes: 20
         run: cargo test --locked --target ${{ matrix.target }}
+      - name: Build the GPUI application
+        run: cargo build --locked --target ${{ matrix.target }} --bin console-link
+      - name: Native GPUI video smoke
+        if: ${{ !inputs.nintendo_components_only }}
+        timeout-minutes: 2
+        shell: bash
+        env:
+          NATIVE_TARGET: ${{ matrix.target }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, subprocess, sys
+          suffix = '.exe' if sys.platform == 'win32' else ''
+          executable = pathlib.Path('target') / os.environ['NATIVE_TARGET'] / 'debug' / ('console-link' + suffix)
+          log = pathlib.Path(os.environ['RUNNER_TEMP']) / 'console-link-gpui-smoke.log'
+          arguments = [str(executable.resolve()), '--synthetic', '--smoke-cycle', '--smoke-seconds', '14']
+          try:
+              result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", timeout=30)
+          except subprocess.TimeoutExpired as error:
+              output = error.stdout or b''
+              if isinstance(output, bytes):
+                  output = output.decode('utf-8', errors='replace')
+              log.write_text(output, encoding='utf-8')
+              print(output)
+              raise SystemExit('Native GPUI smoke exceeded 30 seconds; no headless-success or CPU fallback is accepted')
+          log.write_text(result.stdout, encoding='utf-8')
+          print(result.stdout)
+          if result.returncode != 0:
+              raise SystemExit(f'Native GPUI smoke failed with exit code {result.returncode}; inspect window/GPU/DirectComposition diagnostics above')
+          counters = re.findall(r'GPUI_SHUTDOWN presents=(\d+) gpu_readback_playback=0', result.stdout)
+          if not counters or int(counters[-1]) <= 0:
+              raise SystemExit('Native GPUI smoke did not confirm a presented GPU frame without playback readback')
+          for mode in ('Borderless', 'Fullscreen', 'Windowed'):
+              if f'mode={mode}' not in result.stdout:
+                  raise SystemExit(f'Native smoke did not exercise {mode}')
+          borderless = [line for line in result.stdout.splitlines() if 'mode=Borderless fullscreen=false' in line]
+          if not borderless:
+              raise SystemExit('Borderless mode was not confirmed outside native fullscreen')
+          # Native style changes notify GPUI on the next event-loop turn.
+          # Check the settled sample, while rejecting persistent viewport drift.
+          line = borderless[-1]
+          sizes = re.findall(r'Size \{ ([0-9.]+)px × ([0-9.]+)px \}', line)
+          if len(sizes) < 2:
+              raise SystemExit(f'Could not parse borderless native bounds and viewport: {line}')
+          if sizes[0] != sizes[1]:
+              raise SystemExit(f'Borderless native bounds and GPUI viewport differ: {line}')
+          PY
+      - name: Upload GPUI smoke diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-smoke-diagnostics-${{ matrix.target }}
+          path: ${{ runner.temp }}/console-link-gpui-smoke.log
+          if-no-files-found: ignore
       - name: Verify private Nintendo component installation
         timeout-minutes: 8
         shell: bash
         env:
           RUNTIME_TEST_DIR: ${{ runner.temp }}/console-link-nintendo-check
-        run: cargo run --locked -- --install-nintendo-runtime "$RUNTIME_TEST_DIR"
+        run: cargo run --locked --target ${{ matrix.target }} --bin console-link -- --install-nintendo-runtime "$RUNTIME_TEST_DIR"
       - name: Package macOS
         if: runner.os == 'macOS' && !inputs.nintendo_components_only
         run: |
@@ -110,7 +171,7 @@ jobs:
           cp dist/console-link-macos-arm64.zip "dist/release/console-link-${CONSOLE_LINK_VERSION}-macos-arm64.zip"
       - name: Package Windows and verify installation
         if: runner.os == 'Windows' && !inputs.nintendo_components_only
-        timeout-minutes: 15
+        timeout-minutes: 25
         shell: pwsh
         run: |
           ./scripts/package-windows.ps1 -SmokeTest

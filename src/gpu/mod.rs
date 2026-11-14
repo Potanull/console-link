@@ -26,6 +26,7 @@ pub struct VideoRenderer {
     format: wgpu::TextureFormat,
     warning: Option<String>,
     effective: UpscaleSettings,
+    effective_target: [u32; 2],
     background: [u8; 3],
 }
 
@@ -39,6 +40,7 @@ impl VideoRenderer {
             format,
             warning: None,
             effective: UpscaleSettings::default(),
+            effective_target: [1, 1],
             background: [0, 0, 0],
         })
     }
@@ -66,6 +68,10 @@ impl VideoRenderer {
         self.effective
     }
 
+    pub fn effective_target(&self) -> [u32; 2] {
+        self.effective_target
+    }
+
     pub fn warning(&self) -> Option<&str> {
         self.warning.as_deref()
     }
@@ -90,6 +96,12 @@ impl VideoRenderer {
             viewport[2].round().max(1.0) as u32,
             viewport[3].round().max(1.0) as u32,
         ];
+        let viewport_target = target;
+        let target = frame.map_or(target, |frame| {
+            settings
+                .output_resolution
+                .target(target, [frame.width, frame.height])
+        });
         let mut effective = settings;
         effective.mode = UpscaleMode::Standard;
         let enhanced = if let Some(frame) = frame {
@@ -147,6 +159,7 @@ impl VideoRenderer {
             false
         };
         self.effective = effective;
+        self.effective_target = if enhanced { target } else { viewport_target };
         if !enhanced && let Some(frame) = frame {
             self.grade.update(device, queue, frame, color, original);
         }

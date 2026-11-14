@@ -42,6 +42,8 @@ pub struct Settings {
     pub mode: Option<VideoMode>,
     pub capture_preferences: CapturePreferences,
     pub game_window_mode: GameWindowMode,
+    /// Explicit video-only mode preserves device selections for the next audio session.
+    pub audio_enabled: bool,
     pub audio_input_id: String,
     pub audio_output_id: String,
     pub gain: f32,
@@ -71,6 +73,7 @@ impl Default for Settings {
             mode: None,
             capture_preferences: CapturePreferences::default(),
             game_window_mode: GameWindowMode::default(),
+            audio_enabled: true,
             audio_input_id: String::new(),
             audio_output_id: String::new(),
             gain: audio::DEFAULT_GAIN,
@@ -237,6 +240,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn video_only_setting_preserves_legacy_audio_and_roundtrips() {
+        let legacy = Settings::parse(r#"{"schema_version":1}"#).unwrap();
+        assert!(legacy.audio_enabled);
+        let video = Settings::parse(r#"{"schema_version":1,"audio_enabled":false,"audio_input_id":"saved-input","audio_output_id":"saved-output"}"#).unwrap();
+        let decoded = Settings::parse(&serde_json::to_string(&video).unwrap()).unwrap();
+        assert!(!decoded.audio_enabled);
+        assert_eq!(decoded.audio_input_id, "saved-input");
+        assert_eq!(decoded.audio_output_id, "saved-output");
+    }
+    #[test]
     fn equalizer_preset_names_are_cleaned_before_duplicate_detection() {
         let settings = Settings::parse(
             r#"{"schema_version":1,"equalizer_presets":[
@@ -283,7 +296,7 @@ mod tests {
     fn capture_preference_limits_and_window_mode_survive_roundtrip() {
         let settings = Settings::parse(r#"{"schema_version":1,"capture_preferences":{"automatic":false,"preferred_fps":900},"game_window_mode":"borderless"}"#).unwrap();
         assert!(!settings.capture_preferences.automatic);
-        assert_eq!(settings.capture_preferences.preferred_fps, 60);
+        assert_eq!(settings.capture_preferences.preferred_fps, 120);
         assert_eq!(settings.game_window_mode, GameWindowMode::Borderless);
         let decoded = Settings::parse(&serde_json::to_string(&settings).unwrap()).unwrap();
         assert_eq!(decoded.capture_preferences, settings.capture_preferences);

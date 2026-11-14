@@ -13,9 +13,12 @@ pub mod capture {
     pub const HISTORY_TOLERANCE_NS: u64 = 50_000_000;
     pub const MAX_FRAME_BYTES: usize = 256 * 1024 * 1024;
     pub const MAX_SYNC_MS: i32 = 500;
-    pub const MAX_WIDTH: u32 = 1920;
-    pub const MAX_HEIGHT: u32 = 1080;
-    pub const MAX_FPS: u32 = 60;
+    pub const DEFAULT_WIDTH: u32 = 1920;
+    pub const DEFAULT_HEIGHT: u32 = 1080;
+    pub const DEFAULT_FPS: u32 = 60;
+    pub const MAX_WIDTH: u32 = 3840;
+    pub const MAX_HEIGHT: u32 = 2160;
+    pub const MAX_FPS: u32 = 120;
     pub const MAX_DEVICE_DIMENSION: u32 = 8192;
     pub const RETRY_INITIAL_SECS: u64 = 2;
     pub const RETRY_MAX_SECS: u64 = 30;

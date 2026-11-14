@@ -100,6 +100,9 @@ pub(super) struct Desktop {
 
 impl Desktop {
     fn new(persistent: bool, synthetic: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        if let Err(error) = window::set_application_icon(window) {
+            eprintln!("Application icon: {error}");
+        }
         let runtime = Runtime::new(persistent);
         let brand = brand_image();
         let startup_page = crate::argument("--ui-page");
@@ -421,7 +424,7 @@ impl Desktop {
                         frame,
                         color,
                         settings: renderer.effective_settings(),
-                        target: [viewport[2] as u32, viewport[3] as u32],
+                        target: renderer.effective_target(),
                         original,
                     });
                 }
@@ -650,7 +653,7 @@ impl Desktop {
             (Page::Session, "ui/console.svg", "Подключение"),
             (Page::Audio, "ui/audio.svg", "Звук"),
             (Page::Image, "ui/image.svg", "Изображение"),
-            (Page::Discord, "ui/chat.svg", "Discord"),
+            (Page::Discord, "ui/discord.svg", "Discord"),
             (Page::Settings, "ui/settings.svg", "Настройки"),
         ] {
             let selected = self.page == page;
@@ -768,7 +771,7 @@ impl Desktop {
             Page::Session => ("ui/console.svg", "Подключение"),
             Page::Audio => ("ui/audio.svg", "Звук"),
             Page::Image => ("ui/image.svg", "Изображение"),
-            Page::Discord => ("ui/chat.svg", "Discord"),
+            Page::Discord => ("ui/discord.svg", "Discord"),
             Page::Settings => ("ui/settings.svg", "Настройки"),
         };
         div()
@@ -900,11 +903,8 @@ impl Render for Desktop {
                 .or_else(|| self.runtime.notice.clone());
             let mut column = div()
                 .w_full()
-                .max_w(px(if self.page == Page::Session {
-                    820.
-                } else {
-                    920.
-                }))
+                .min_w_0()
+                .max_w(px(920.))
                 .flex_shrink_0()
                 .flex()
                 .flex_col()
@@ -1140,9 +1140,18 @@ pub fn run() {
             .detach();
             cx.spawn(async move |cx| {
                 loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(8))
-                        .await;
+                    let interval = handle
+                        .update(cx, |this, _, _| {
+                            if this.playing
+                                && this.runtime.settings.capture_preferences.preferred_fps > 60
+                            {
+                                Duration::from_millis(2)
+                            } else {
+                                Duration::from_millis(8)
+                            }
+                        })
+                        .unwrap_or(Duration::from_millis(8));
+                    cx.background_executor().timer(interval).await;
                     let active = handle.update(cx, |this, window, cx| {
                         this.tick(window, cx);
                         !this.closed

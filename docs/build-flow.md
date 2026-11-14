@@ -38,3 +38,19 @@ gh workflow run release.yml --ref main -f build_run_id=123456789 -f release_tag=
 | Сохранение кэша | 72 с | 65 с |
 
 Новый flow убирает release build из PR, перекрывает его по времени с тестами на main и полностью исключает сборку при публикации. Это структурное сокращение работы; длительность нового CI нужно измерить после первого и повторного прогона. Очередь GitHub runners и холодный кэш могут оставаться заметной частью ожидания. Числа выше не являются обещанием времени нового выпуска.
+
+
+## Focused development checks
+
+- `python scripts/check.py --core`: library tests without compiling GPUI. This
+  covers capture policy, audio, settings, Nintendo, Discord, and GPU processing.
+- `python scripts/check.py`: formatting and compilation of all targets.
+- `python scripts/check.py --full`: mandatory complete checks, including desktop
+  tests, strict Clippy, and Nintendo helper tests.
+- `cargo build --locked --profile preview`: optimized local application, without
+  shipping ThinLTO. Binary is in `target/preview`. Release packaging still uses
+  `--release`; preview is not a substitute for validating release artifacts.
+
+The check script reports elapsed time for each step. Compare warm runs using the
+same toolchain, hardware and target directory; first-time dependency downloads
+and different cache states are not a valid before/after performance comparison.

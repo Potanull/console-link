@@ -28,6 +28,15 @@ const CANCELLED: &str = "Установка отменена.";
 const DISK_ERROR: &str =
     "Не удалось подготовить компоненты Nintendo. Проверь права и свободное место.";
 
+// Keep native error codes for diagnosing Windows sharing/permission failures, never paths or child output.
+fn disk_error(operation: &str, error: &std::io::Error) -> String {
+    format!(
+        "{DISK_ERROR} [{operation}; kind={:?}; os={:?}]",
+        error.kind(),
+        error.raw_os_error()
+    )
+}
+
 /// Cancellation owns the active child so UI teardown can stop it before exiting.
 #[derive(Default)]
 pub struct Cancellation {
@@ -269,7 +278,8 @@ pub fn install(
     progress(Stage::Verifying);
     verify(&helper, &staging.0, cancelled)?;
     check_cancelled(cancelled)?;
-    fs::write(staging.0.join("complete"), marker()).map_err(|_| DISK_ERROR)?;
+    fs::write(staging.0.join("complete"), marker())
+        .map_err(|error| disk_error("write-completion", &error))?;
     let _ = fs::remove_dir_all(staging.0.join("npm-cache"));
     let _ = fs::remove_dir_all(staging.0.join(".verify-data"));
     let _ = fs::remove_dir_all(staging.0.join("tmp"));
@@ -364,7 +374,7 @@ fn system_root() -> Result<PathBuf, String> {
 
 fn private_command(program: &Path, node: &Path, work: &Path) -> Result<Command, String> {
     let temporary = work.join("tmp");
-    fs::create_dir_all(&temporary).map_err(|_| DISK_ERROR)?;
+    fs::create_dir_all(&temporary).map_err(|error| disk_error("prepare-private-tmp", &error))?;
     let mut paths = vec![node.parent().ok_or(DISK_ERROR)?.to_owned()];
     #[cfg(windows)]
     let system_root = system_root()?;
@@ -473,16 +483,16 @@ fn verify(helper: &ManagedHelper, work: &Path, cancelled: &Cancellation) -> Resu
 fn activate(staging: &Path, destination: &Path, backup: &Path) -> Result<(), String> {
     if destination.exists() {
         if backup.exists() {
-            fs::remove_dir_all(backup).map_err(|_| DISK_ERROR)?;
+            fs::remove_dir_all(backup).map_err(|error| disk_error("remove-old-backup", &error))?;
         }
-        fs::rename(destination, backup).map_err(|_| DISK_ERROR)?;
+        fs::rename(destination, backup).map_err(|error| disk_error("backup-runtime", &error))?;
     }
-    if fs::rename(staging, destination).is_err() {
+    if let Err(error) = fs::rename(staging, destination) {
         if backup.exists() {
             fs::rename(backup, destination)
                 .map_err(|_| "Не удалось восстановить предыдущие компоненты Nintendo.")?;
         }
-        return Err(DISK_ERROR.into());
+        return Err(disk_error("activate-runtime", &error));
     }
     let _ = fs::remove_dir_all(backup);
     Ok(())
@@ -510,6 +520,21 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn disk_diagnostic_keeps_operation_and_code_without_sensitive_error_details() {
+        let error = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "private-account-path/token-value",
+        );
+        let message = disk_error("activate-runtime", &error);
+        assert!(message.contains("activate-runtime") && message.contains("PermissionDenied"));
+        assert!(!message.contains("private-account-path") && !message.contains("token-value"));
+        assert!(
+            disk_error("activate-runtime", &std::io::Error::from_raw_os_error(32))
+                .contains("os=Some(32)")
+        );
     }
 
     #[test]

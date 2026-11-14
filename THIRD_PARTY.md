@@ -1,18 +1,14 @@
 # Сторонние компоненты
 
-Лицензии зависимостей для macOS и Windows из Cargo.lock. GPUI-каталог обновлен по normal dependency graph из `cargo metadata --locked --filter-platform` для aarch64-apple-darwin и x86_64-pc-windows-msvc; прежние записи legacy UI сохранены как superset. Тексты с атрибуцией включены в THIRD_PARTY_LICENSES.txt. Системные frameworks поставляются ОС.
+Лицензии зависимостей для macOS и Windows. Каталог составлен по normal dependency graph из `cargo metadata --locked --filter-platform` для aarch64-apple-darwin и x86_64-pc-windows-msvc; записи пакетов, отсутствующих в Cargo.lock после удаления старого интерфейса, исключены. Тексты с атрибуцией включены в THIRD_PARTY_LICENSES.txt; сборник также сохраняет уведомления прежних версий. Системные frameworks поставляются ОС.
 
 | Crate | Версия | Лицензия | Тексты |
 |---|---|---|---|
-| ab_glyph | 0.2.32 | Apache-2.0 | a6cba85bc92e |
-| ab_glyph_rasterizer | 0.1.10 | Apache-2.0 | a6cba85bc92e |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | 861399f8c21c, 8ada45cd9f84, 23f18e03dc49 |
-| ahash | 0.8.12 | MIT OR Apache-2.0 | a60eea817514, 0444c6991eea |
 | aho-corasick | 1.1.5 | Unlicense OR MIT | gpui-01c266bced4a, gpui-0f96a83840e1 |
 | aligned | 0.4.3 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-035e70219855 |
 | aligned-vec | 0.6.4 | MIT | gpui-bf5a93d10144 |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | gpui-62c7a1e35f56, gpui-23f18e03dc49 |
-| arboard | 3.7.0 | MIT OR Apache-2.0 | 0d542e0c8804, f35468024534 |
 | arg_enum_proc_macro | 0.3.4 | MIT | gpui-8eb4fb5a6505 |
 | arrayref | 0.3.9 | BSD-2-Clause | gpui-1bc7e6f475b3 |
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 | a60eea817514, 4da95ec4ecb6 |
@@ -48,7 +44,6 @@
 | block | 0.1.6 | MIT | SPDX MIT terms; manifest attribution |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | a9040321c371, d5c22aa3118d |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | gpui-a9040321c371, gpui-98181e7249d0 |
-| block2 | 0.5.1 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | block2 | 0.6.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | blocking | 1.7.0 | Apache-2.0 OR MIT | gpui-a60eea817514, gpui-23f18e03dc49 |
 | bstr | 1.13.1 | MIT OR Apache-2.0 | gpui-68653aaa727a, gpui-a60eea817514, gpui-6b7374c39a57 |
@@ -63,7 +58,6 @@
 | cgl | 0.3.2 | MIT / Apache-2.0 | ec82b96487e9, a60eea817514, 62065228e42c |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 | gpui-a9040321c371, gpui-b8c6939380a4 |
 | chrono | 0.4.45 | MIT OR Apache-2.0 | 946c9835d803 |
-| clipboard-win | 5.4.3 | BSL-1.0 | c9bff7573892 |
 | cocoa | 0.26.0 | MIT OR Apache-2.0 | gpui-ec82b96487e9, gpui-a60eea817514, gpui-62065228e42c |
 | cocoa-foundation | 0.2.0 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-62065228e42c |
 | codespan-reporting | 0.12.0 | Apache-2.0 | c71d239df917 |
@@ -75,10 +69,8 @@
 | const-oid | 0.10.3 | Apache-2.0 OR MIT | gpui-a9040321c371, gpui-73b9dc2e79c7 |
 | convert_case | 0.4.0 | MIT | gpui-f9c4c77baa38 |
 | core-foundation | 0.10.0 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-62065228e42c |
-| core-foundation | 0.10.1 | MIT OR Apache-2.0 | a60eea817514, 62065228e42c |
 | core-foundation | 0.9.4 | MIT OR Apache-2.0 | a60eea817514, 62065228e42c |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | a60eea817514, 62065228e42c |
-| core-graphics | 0.23.2 | MIT OR Apache-2.0 | ec82b96487e9, a60eea817514, 62065228e42c |
 | core-graphics | 0.24.0 | MIT OR Apache-2.0 | gpui-ec82b96487e9, gpui-a60eea817514, gpui-62065228e42c |
 | core-graphics-types | 0.1.3 | MIT OR Apache-2.0 | a60eea817514, 62065228e42c |
 | core-graphics-types | 0.2.0 | MIT OR Apache-2.0 | a60eea817514, 62065228e42c |
@@ -101,7 +93,6 @@
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 | gpui-a9040321c371, gpui-d2e7ec5355c9 |
 | ctor | 0.4.3 | Apache-2.0 OR MIT | gpui-a8ad31b1c3f4, gpui-fd80a26fbb3f |
 | ctor-proc-macro | 0.0.6 | Apache-2.0 OR MIT | gpui-a8ad31b1c3f4, gpui-fd80a26fbb3f |
-| cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | b59affd015e5, c138726a726a, 01e533bd94e8 |
 | dasp_sample | 0.11.0 | MIT OR Apache-2.0 | 756c8d2ab2dc, b1d6df41ed3a |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-b38f11f60967 |
 | deflate64 | 0.1.12 | MIT | gpui-86b5aedec040 |
@@ -115,33 +106,21 @@
 | dirs-sys | 0.4.1 | MIT OR Apache-2.0 | gpui-d3174ad63e72, gpui-6a2e0ade09a7 |
 | dirs-sys | 0.5.0 | MIT OR Apache-2.0 | d3174ad63e72, 6a2e0ade09a7 |
 | discord-rich-presence | 1.1.0 | MIT | 28e9aeba487f |
-| dispatch | 0.2.0 | MIT | SPDX MIT terms; manifest attribution |
 | dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | displaydoc | 0.2.7 | MIT OR Apache-2.0 | a60eea817514, 23f18e03dc49 |
 | dlib | 0.5.3 | MIT | gpui-7bbe6f97e377 |
 | document-features | 0.2.12 | MIT OR Apache-2.0 | 074e6e32c86a, aa893340d14b |
-| dpi | 0.1.2 | Apache-2.0 AND MIT | 6dc0e068dcf3, 9eff396a99ba |
 | dtor | 0.0.6 | Apache-2.0 OR MIT | gpui-752daf2fb234 |
 | dtor-proc-macro | 0.0.5 | Apache-2.0 OR MIT | gpui-752daf2fb234 |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | gpui-a2010f343487 |
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 | gpui-62c7a1e35f56, gpui-23f18e03dc49 |
-| ecolor | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| eframe | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| egui | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| egui-wgpu | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| egui-winit | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| egui_glow | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
 | either | 1.19.0 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-7576269ea71f |
-| emath | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
 | encoding_rs | 0.8.44 | (Apache-2.0 OR MIT) AND BSD-3-Clause | gpui-11789f45bb18, gpui-cfc7749b96f6, gpui-3fa4ca83dcc9, gpui-838118388fe5 |
-| epaint | 0.33.3 | MIT OR Apache-2.0 | 8173d5c29b4f, 95ca92f5f8ea |
-| epaint_default_fonts | 0.33.3 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | 6a73f9541c2d, b9d2c1d909aa |
 | equator | 0.4.2 | MIT | gpui-97d3424e347e |
 | equator-macro | 0.4.2 | MIT | gpui-97d3424e347e |
 | equivalent | 1.0.3 | Apache-2.0 OR MIT | a60eea817514, 7365cc8878a1 |
 | erased-serde | 0.4.11 | MIT OR Apache-2.0 | gpui-62c7a1e35f56, gpui-23f18e03dc49 |
 | errno | 0.3.14 | MIT OR Apache-2.0 | a60eea817514, 8764a5976757 |
-| error-code | 3.4.0 | BSL-1.0 | c9bff7573892 |
 | etagere | 0.2.15 | MIT/Apache-2.0 | gpui-2d56a37f3d1e, gpui-9cfc9c9a4608 |
 | euclid | 0.22.14 | MIT OR Apache-2.0 | gpui-ec82b96487e9, gpui-a60eea817514, gpui-62065228e42c |
 | event-listener | 2.5.3 | Apache-2.0 OR MIT | gpui-a60eea817514, gpui-23f18e03dc49 |
@@ -182,13 +161,7 @@
 | getrandom | 0.3.4 | MIT OR Apache-2.0 | aaff376532ea, 29e9fe5074bd |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | aaff376532ea, 523a42c25d24 |
 | gif | 0.14.2 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-77257f3d2181 |
-| gl_generator | 0.14.0 | Apache-2.0 | cfc7749b96f6 |
 | globset | 0.4.21 | Unlicense OR MIT | gpui-01c266bced4a, gpui-0f96a83840e1 |
-| glow | 0.16.0 | MIT OR Apache-2.0 OR Zlib | 769f80b5bcb4, 30fefc3a7d6a, b3ec01ad0869 |
-| glutin | 0.32.3 | Apache-2.0 | a44454274400 |
-| glutin-winit | 0.5.0 | MIT | d35629aec828 |
-| glutin_egl_sys | 0.7.1 | Apache-2.0 | a44454274400 |
-| glutin_wgl_sys | 0.6.1 | Apache-2.0 | a44454274400 |
 | gpu-allocator | 0.27.0 | MIT OR Apache-2.0 | 0178e21322b0, ad41be6cc653 |
 | gpui | 0.2.2 | Apache-2.0 | gpui-752daf2fb234 |
 | gpui-macros | 0.2.2 | Apache-2.0 | gpui-752daf2fb234 |
@@ -240,7 +213,6 @@
 | itertools | 0.14.0 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-7576269ea71f |
 | itoa | 1.0.19 | MIT OR Apache-2.0 | 62c7a1e35f56, 23f18e03dc49 |
 | keyring | 3.6.3 | MIT OR Apache-2.0 | 78ebc2ea2a1c, 157cc607717b |
-| khronos_api | 3.1.0 | Apache-2.0 | cfc7749b96f6 |
 | kurbo | 0.11.3 | Apache-2.0 OR MIT | gpui-cfc7749b96f6, gpui-23c23145f6ea |
 | kv-log-macro | 1.0.7 | MIT OR Apache-2.0 | gpui-b00ec75cd7ef, gpui-ce688e08d045 |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-23f18e03dc49 |
@@ -286,7 +258,6 @@
 | nix | 0.29.0 | MIT | gpui-66e3ee1fa7f9 |
 | nix | 0.31.3 | MIT | gpui-66e3ee1fa7f9 |
 | no_std_io2 | 0.9.4 | Apache-2.0 OR MIT | gpui-b40930bbcf80, gpui-f21c3bfdc477 |
-| nohash-hasher | 0.2.0 | Apache-2.0 OR MIT | cfc7749b96f6, ec353d4fecf7 |
 | nom | 8.0.0 | MIT | gpui-4dbda0434445 |
 | noop_proc_macro | 0.3.0 | MIT | gpui-d69f24ad84ec |
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-6485b8ed310d |
@@ -297,37 +268,28 @@
 | num_cpus | 1.17.0 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-1626f2c950ce |
 | oauth2 | 5.0.0 | MIT OR Apache-2.0 | a60eea817514, 378f5840b258 |
 | objc | 0.2.7 | MIT | e353f37b12ae |
-| objc-sys | 0.3.5 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2 | 0.5.3 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2 | 0.6.5 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2-app-kit | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-audio-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-av-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-avf-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-audio-types | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2-core-data | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-graphics | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2-core-image | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-image | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-media | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-core-video | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-encode | 4.1.0 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2-foundation | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-foundation | 0.3.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-image-io | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-io-surface | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-media-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2-metal | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-metal | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
-| objc2-quartz-core | 0.2.2 | MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | 0c9a5f6fe28e, f6a2e783669a, fced3e7fedc2, e489d07e5496 |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | a60eea817514, 23f18e03dc49 |
 | option-ext | 0.2.0 | MPL-2.0 | 66a3107d5ad6 |
 | ordered-float | 5.5.1 | MIT | f7715d38a3fa |
-| owned_ttf_parser | 0.25.1 | Apache-2.0 | a6cba85bc92e |
 | parking | 2.2.1 | Apache-2.0 OR MIT | gpui-a60eea817514, gpui-23f18e03dc49, gpui-9a6d7a3c1b8e |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | a60eea817514, c9a75f18b9ab |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | a60eea817514, c9a75f18b9ab |
@@ -346,7 +308,6 @@
 | png | 0.18.1 | MIT OR Apache-2.0 | a60eea817514, eaf40297c75d |
 | polling | 3.11.0 | Apache-2.0 OR MIT | gpui-a60eea817514, gpui-23f18e03dc49 |
 | pollster | 0.2.5 | Apache-2.0/MIT | gpui-a60eea817514, gpui-cc02a5331667 |
-| pollster | 0.4.0 | Apache-2.0/MIT | a60eea817514, cc02a5331667 |
 | postage | 0.5.0 | MIT | gpui-d4a0afb0c4ac |
 | potential_utf | 0.1.6 | Unicode-3.0 | f367c1b8e1aa |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | 0218327e7a48, 4cada0bd02ea |
@@ -436,7 +397,6 @@
 | slotmap | 1.1.1 | Zlib | gpui-6cec81441b2a |
 | smallvec | 1.16.5 | MIT OR Apache-2.0 | a60eea817514, 0b28172679e0 |
 | smol | 2.0.2 | Apache-2.0 OR MIT | gpui-a60eea817514, gpui-23f18e03dc49 |
-| smol_str | 0.2.2 | MIT OR Apache-2.0 | a60eea817514, 23f18e03dc49 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | a60eea817514, 378f5840b258 |
 | spin | 0.9.9 | MIT | gpui-58545fed1565 |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | a60eea817514, 5e05b024f653 |
@@ -493,7 +453,6 @@
 | tracing-core | 0.1.36 | MIT | 898b1ae9821e |
 | try-lock | 0.2.5 | MIT | c816a0749cdc |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | a60eea817514, f3c9fe731c70 |
-| type-map | 0.5.1 | MIT/Apache-2.0 | 00fb0b04768f, 6e9587a31f8b |
 | typeid | 1.0.3 | MIT OR Apache-2.0 | gpui-62c7a1e35f56, gpui-23f18e03dc49 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | db11fec99467, 516b24e051bf, a825bd853ab7 |
 | unicase | 2.10.0 | MIT OR Apache-2.0 | gpui-a60eea817514, gpui-2d0189041449 |
@@ -578,12 +537,10 @@
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 | c16f8dcf1a36, c2cfccb812fe |
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | c16f8dcf1a36, c2cfccb812fe |
 | windows_x86_64_msvc | 0.53.1 | MIT OR Apache-2.0 | c16f8dcf1a36, c2cfccb812fe |
-| winit | 0.30.13 | Apache-2.0 | 6dc0e068dcf3 |
 | winresource | 0.1.34 | MIT | 3564da09711c |
 | winsafe | 0.0.19 | MIT | gpui-e6b9b47cd4cb |
 | writeable | 0.6.4 | Unicode-3.0 | f367c1b8e1aa |
 | xattr | 0.2.3 | MIT/Apache-2.0 | gpui-a60eea817514, gpui-8b427f5bc501 |
-| xml-rs | 0.8.29 | MIT | 0dc18d924dc0 |
 | xmlwriter | 0.1.0 | MIT | gpui-2cdce1ff4ca8 |
 | y4m | 0.8.0 | MIT | gpui-1327309babc5 |
 | yeslogic-fontconfig-sys | 6.0.1 | MIT | gpui-1946ace4922e |

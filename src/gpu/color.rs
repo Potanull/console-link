@@ -57,7 +57,7 @@ impl Resources {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("SDR color shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../app/color.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("color.wgsl").into()),
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Video color pipeline"),

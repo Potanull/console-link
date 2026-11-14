@@ -6,7 +6,7 @@ use crate::{
 };
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
-#[path = "../app/rtx_video.rs"]
+#[path = "rtx_video.rs"]
 mod rtx_video;
 pub const MAX_TARGET_DIMENSION: u32 = 8192;
 pub fn checked_gpu_creation<T>(
@@ -160,11 +160,11 @@ impl Resources {
         });
         let fsr = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("FSR 1 EASU RCAS"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../app/fsr.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("fsr.wgsl").into()),
         });
         let nis = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("NVIDIA Image Scaling"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../app/nis.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("nis.wgsl").into()),
         });
         let make = |shader: &wgpu::ShaderModule, entry: &str, format| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

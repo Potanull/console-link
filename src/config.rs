@@ -3,12 +3,6 @@
 pub mod app {
     use std::time::Duration;
 
-    pub const TITLE: &str = "Console Link";
-    pub const REPOSITORY_URL: &str = "https://github.com/Potanull/console-link";
-    pub const WINDOW_SIZE: [f32; 2] = [1200.0, 800.0];
-    pub const MIN_WINDOW_SIZE: [f32; 2] = [720.0, 600.0];
-    pub const MAX_WINDOW_SIZE: [f32; 2] = [1920.0, 1440.0];
-    pub const EVENT_QUEUE_CAPACITY: usize = 16;
     pub const FRAME_QUEUE_CAPACITY: usize = 3;
     pub const SETTINGS_SAVE_DELAY: Duration = Duration::from_millis(700);
     pub const SIGNAL_TIMEOUT: Duration = Duration::from_secs(4);

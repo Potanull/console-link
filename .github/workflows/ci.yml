@@ -17,10 +17,10 @@ on:
         required: true
         default: false
       release_tag:
-        description: Release tag matching Cargo.toml (for example v0.6.1)
+        description: Release tag matching Cargo.toml (for example v0.7.0)
         type: string
         required: true
-        default: v0.6.1
+        default: v0.7.0
 
 permissions:
   contents: read
@@ -98,8 +98,6 @@ jobs:
         run: cargo fmt --check
       - name: Clippy
         run: cargo clippy --locked --all-targets --target ${{ matrix.target }} -- -D warnings
-      - name: Compile legacy rollback frontend
-        run: cargo check --locked --no-default-features --features legacy-ui --bin console-link-legacy --target ${{ matrix.target }}
       - name: Tests
         if: ${{ !inputs.nintendo_components_only }}
         timeout-minutes: 20

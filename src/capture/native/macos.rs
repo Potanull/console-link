@@ -225,9 +225,14 @@ fn mode_rates(format: &AVCaptureDeviceFormat) -> Vec<(u32, u32)> {
             (30, 1),
             (50, 1),
             (60, 1),
+            (75, 1),
+            (90, 1),
+            (100, 1),
+            (120, 1),
             (24000, 1001),
             (30000, 1001),
             (60000, 1001),
+            (120000, 1001),
         ] {
             let rate = num as f64 / den as f64;
             if rate >= min - 0.00001 && rate <= max + 0.00001 {
@@ -235,7 +240,11 @@ fn mode_rates(format: &AVCaptureDeviceFormat) -> Vec<(u32, u32)> {
             }
         }
     }
-    rates.retain(|&(num, den)| den > 0 && num > 0 && num as f64 / den as f64 <= 60.00001);
+    rates.retain(|&(num, den)| {
+        den > 0
+            && num > 0
+            && num as f64 / den as f64 <= f64::from(crate::config::capture::MAX_FPS) + 0.00001
+    });
     rates.sort_unstable();
     rates.dedup();
     rates
@@ -250,7 +259,11 @@ pub fn enumerate() -> Result<Vec<VideoDevice>, String> {
             for format in &unsafe { device.formats() } {
                 let description = unsafe { format.formatDescription() };
                 let size = unsafe { CMVideoFormatDescriptionGetDimensions(&description) };
-                if size.width <= 0 || size.height <= 0 || size.width > 1920 || size.height > 1080 {
+                if size.width <= 0
+                    || size.height <= 0
+                    || size.width > crate::config::capture::MAX_WIDTH as i32
+                    || size.height > crate::config::capture::MAX_HEIGHT as i32
+                {
                     continue;
                 }
                 for (fps_num, fps_den) in mode_rates(&format) {

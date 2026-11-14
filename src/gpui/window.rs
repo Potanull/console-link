@@ -520,11 +520,12 @@ pub fn set_application_icon(window: &Window) -> Result<(), String> {
     let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
     unsafe {
         let module = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+        // MAKEINTRESOURCEW(1): this is an integer resource identifier, not a dereferenceable string.
         // winresource embeds the main icon under resource ID 1.
         for (kind, size) in [(0, 16), (1, 32)] {
             let icon = LoadImageW(
                 Some(HINSTANCE(module.0)),
-                PCWSTR(1usize as *const u16),
+                PCWSTR(std::ptr::without_provenance(1)),
                 IMAGE_ICON,
                 size,
                 size,

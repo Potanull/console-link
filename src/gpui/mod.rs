@@ -1139,25 +1139,25 @@ pub fn run() {
             })
             .detach();
             cx.spawn(async move |cx| {
+                let mut interval = Duration::from_millis(8);
                 loop {
-                    let interval = handle
-                        .update(cx, |this, _, _| {
-                            if this.playing
-                                && this.runtime.settings.capture_preferences.preferred_fps > 60
-                            {
-                                Duration::from_millis(2)
-                            } else {
-                                Duration::from_millis(8)
-                            }
-                        })
-                        .unwrap_or(Duration::from_millis(8));
                     cx.background_executor().timer(interval).await;
-                    let active = handle.update(cx, |this, window, cx| {
+                    let next = handle.update(cx, |this, window, cx| {
                         this.tick(window, cx);
-                        !this.closed
+                        if this.closed {
+                            return None;
+                        }
+                        Some(Duration::from_millis(if !this.playing {
+                            33
+                        } else if this.runtime.settings.capture_preferences.preferred_fps > 60 {
+                            2
+                        } else {
+                            8
+                        }))
                     });
-                    if !matches!(active, Ok(true)) {
-                        break;
+                    match next {
+                        Ok(Some(next)) => interval = next,
+                        _ => break,
                     }
                 }
             })

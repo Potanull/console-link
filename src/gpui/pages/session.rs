@@ -22,8 +22,11 @@ impl Desktop {
             "Подключи консоль к HDMI-входу карты захвата, а карту к компьютеру.",
         )
         .child(self.device_picker(Selection::Video, "Карта захвата", cx))
-        .child(self.device_picker(Selection::AudioInput, "Аудиовход карты", cx))
-        .child(self.device_picker(Selection::AudioOutput, "Выход звука", cx))
+        .when(self.runtime.settings.audio_enabled, |source| {
+            source
+                .child(self.device_picker(Selection::AudioInput, "Аудиовход карты", cx))
+                .child(self.device_picker(Selection::AudioOutput, "Выход звука", cx))
+        })
         .child(hint(if self.runtime.active() {
             "Чтобы сменить устройства, заверши сеанс."
         } else {

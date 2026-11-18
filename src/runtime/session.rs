@@ -79,6 +79,8 @@ impl Runtime {
     pub fn stop(&mut self) {
         self.cancelled.store(true, Ordering::Release);
         self.generation = self.generation.wrapping_add(1);
+        // Release idle-sleep prevention now, even if native teardown stalls.
+        self.playback_wake_lock = None;
         if let Some(active) = self.active.take() {
             std::thread::spawn(move || drop(active));
         }

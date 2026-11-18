@@ -2,6 +2,7 @@
 //! after editing settings. Native capture and network operations run on workers.
 mod devices;
 mod nintendo;
+mod power;
 mod presence;
 mod session;
 pub use nintendo::ComponentStatus;
@@ -79,6 +80,7 @@ pub struct Runtime {
     generation: u64,
     cancelled: Arc<AtomicBool>,
     active: Option<Active>,
+    playback_wake_lock: Option<power::PlaybackWakeLock>,
     history: FrameHistory,
     displayed: Option<Arc<VideoFrame>>,
     capture_dropped: Arc<AtomicU64>,
@@ -141,6 +143,7 @@ impl Runtime {
             generation: 0,
             cancelled: Arc::new(AtomicBool::new(true)),
             active: None,
+            playback_wake_lock: None,
             history: FrameHistory::new(
                 capture_config::HISTORY_BUDGET,
                 capture_config::HISTORY_TOLERANCE_NS,
@@ -293,6 +296,13 @@ impl Runtime {
                     match result {
                         Ok(active) => {
                             self.active = Some(active);
+                            self.playback_wake_lock = power::PlaybackWakeLock::new()
+                                .map_err(|error| {
+                                    self.notice = Some(format!(
+                                        "Не удалось запретить сон во время игры: {error}"
+                                    ));
+                                })
+                                .ok();
                             self.apply_audio();
                             self.started = Some(Instant::now());
                             self.started_unix = unix_now();

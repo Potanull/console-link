@@ -27,7 +27,16 @@ mod platform_configuration {
         )))
         .unwrap();
         assert_eq!((icon.width(), icon.height()), (256, 256));
-        assert_eq!(icon.to_rgba8().len(), 256 * 256 * 4);
+        let rgba = icon.to_rgba8();
+        assert_eq!(rgba.len(), 256 * 256 * 4);
+        for (x, y) in [(0, 0), (255, 0), (0, 255), (255, 255), (24, 24)] {
+            assert_eq!(
+                rgba.get_pixel(x, y)[3],
+                0,
+                "Rounded icon corner must be transparent"
+            );
+        }
+        assert!(rgba.get_pixel(128, 128)[3] >= 250);
     }
 }
 pub mod nintendo;

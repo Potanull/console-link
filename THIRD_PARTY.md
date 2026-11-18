@@ -1,5 +1,9 @@
 # Сторонние компоненты
 
+Иконки интерфейса: [Lucide](https://github.com/lucide-icons/lucide), ISC; унаследованные
+из Feather `check` и `chevron-down` также включают MIT notice. Исходники SVG и полный
+текст лицензии находятся в `assets/ui/`; уведомления включены в `THIRD_PARTY_LICENSES.txt`.
+
 Лицензии зависимостей для macOS и Windows. Каталог составлен по normal dependency graph из `cargo metadata --locked --filter-platform` для aarch64-apple-darwin и x86_64-pc-windows-msvc; записи пакетов, отсутствующих в Cargo.lock после удаления старого интерфейса, исключены. Тексты с атрибуцией включены в THIRD_PARTY_LICENSES.txt; сборник также сохраняет уведомления прежних версий. Системные frameworks поставляются ОС.
 
 | Crate | Версия | Лицензия | Тексты |

@@ -110,6 +110,95 @@ fn isolated_runtime_and_late_capture_events_do_not_restart_session() {
     assert!(r.error.is_none());
     assert_eq!(r.history.bytes(), 0);
 }
+
+fn started_session(r: &mut Runtime) {
+    struct Video;
+    impl CaptureSession for Video {}
+    r.cancelled = Arc::new(AtomicBool::new(false));
+    r.opening = true;
+    r.tx.send(Event::Started(
+        r.generation,
+        Ok(Active {
+            video: Box::new(Video),
+            audio: None,
+            cancelled: r.cancelled.clone(),
+        }),
+    ))
+    .unwrap();
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn playback_keeps_awake_only_until_stop_disconnect_or_close() {
+    for finish in [
+        Runtime::stop,
+        |r: &mut Runtime| r.disconnected("Unplugged".into()),
+        Runtime::close,
+    ] {
+        let mut r = Runtime::new(false);
+        assert!(r.playback_wake_lock.is_none());
+        started_session(&mut r);
+        assert!(r.playback_wake_lock.is_none(), "Opening is not playback");
+        r.poll();
+        assert!(r.active());
+        assert!(r.playback_wake_lock.is_some(), "{:?}", r.notice);
+        finish(&mut r);
+        assert!(r.playback_wake_lock.is_none());
+        assert!(!r.active());
+    }
+}
+
+#[test]
+fn failed_and_cancelled_connections_do_not_prevent_sleep() {
+    let mut r = Runtime::new(false);
+    r.cancelled = Arc::new(AtomicBool::new(false));
+    r.tx.send(Event::Started(r.generation, Err("Cannot open card".into())))
+        .unwrap();
+    r.poll();
+    assert!(!r.active());
+    assert!(r.playback_wake_lock.is_none());
+
+    started_session(&mut r);
+    r.stop();
+    r.poll();
+    assert!(!r.active());
+    assert!(
+        r.playback_wake_lock.is_none(),
+        "Stale startup was discarded"
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "Requires the macOS power manager; run alone with --test-threads=1"]
+fn native_playback_assertions_are_registered_and_removed_on_runtime_drop() {
+    fn playback_assertions() -> String {
+        let output = std::process::Command::new("/usr/bin/pmset")
+            .args(["-g", "assertions"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let owner = format!("pid {}(", std::process::id());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                line.contains(&owner) && line.contains("Console Link: active console playback")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    assert!(playback_assertions().is_empty());
+    let mut r = Runtime::new(false);
+    started_session(&mut r);
+    r.poll();
+    let active = playback_assertions();
+    assert!(active.contains("PreventUserIdleDisplaySleep"), "{active}");
+    assert!(active.contains("PreventUserIdleSystemSleep"), "{active}");
+    drop(r);
+    assert!(playback_assertions().is_empty());
+}
+
 #[test]
 fn presence_requires_account_and_current_game_and_obeys_disable() {
     let mut r = Runtime::new(false);

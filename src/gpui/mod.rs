@@ -977,18 +977,6 @@ impl Render for Desktop {
                 root.child(layout)
             };
         }
-        if self.playing && !self.overlay && !self.cursor.is_hidden() {
-            root = root.child(div().absolute().top(px(16.)).right(px(20.)).child(button(
-                "overlay",
-                "Меню · F1",
-                false,
-                cx.listener(|this, _, window, cx| {
-                    this.overlay = true;
-                    this.focus.focus(window);
-                    cx.notify();
-                }),
-            )));
-        }
         if self.playing
             && self
                 .feedback

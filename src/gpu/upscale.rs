@@ -73,6 +73,21 @@ pub fn validate(
     {
         return Err("NIS supports up to 2x scaling per dimension".into());
     }
+    if mode == UpscaleMode::Anime4k {
+        if u64::from(frame.width) * u64::from(frame.height) > 1920 * 1080 {
+            return Err(
+                "AI-апскейл: исходный кадр должен быть не больше Full HD по числу пикселей.".into(),
+            );
+        }
+        if frame.width > limit / 2 || frame.height > limit / 2 {
+            return Err("AI-апскейл: удвоенный кадр превышает размер текстуры GPU.".into());
+        }
+        if u64::from(target[0]) > u64::from(frame.width) * 2
+            || u64::from(target[1]) > u64::from(frame.height) * 2
+        {
+            return Err("AI-апскейл поддерживает увеличение до 2x по каждой стороне.".into());
+        }
+    }
     Ok(mode)
 }
 struct Target {
@@ -109,6 +124,9 @@ pub struct Resources {
     #[cfg(target_os = "windows")]
     rtx: Option<Result<Arc<std::sync::Mutex<rtx_video::Session>>, String>>,
     rtx_error: Option<String>,
+    neural: Option<Result<super::neural::Resources, String>>,
+    neural_target: Option<Target>,
+    neural_error: Option<String>,
 }
 impl Resources {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
@@ -241,7 +259,47 @@ impl Resources {
             #[cfg(target_os = "windows")]
             rtx: None,
             rtx_error: None,
+            neural: None,
+            neural_target: None,
+            neural_error: None,
         }
+    }
+    pub fn release_neural(&mut self) {
+        self.neural = None;
+        self.neural_target = None;
+        self.neural_error = None;
+        if self
+            .last_recipe
+            .as_ref()
+            .is_some_and(|r| r.settings.mode == UpscaleMode::Anime4k)
+        {
+            self.last_recipe = None;
+        }
+    }
+
+    fn prepare_neural(&mut self, device: &wgpu::Device, size: [u32; 2]) -> Result<(), String> {
+        if let Some(error) = &self.neural_error {
+            return Err(error.clone());
+        }
+        let doubled = [size[0] * 2, size[1] * 2];
+        if self
+            .neural_target
+            .as_ref()
+            .is_none_or(|t| t.size != doubled)
+        {
+            self.neural_target = None;
+            self.neural_target = Some(checked_gpu_creation(device, || {
+                self.target(device, doubled, &self.present_uniform)
+            })?);
+        }
+        let neural = self
+            .neural
+            .get_or_insert_with(|| {
+                checked_gpu_creation(device, || super::neural::Resources::new(device))
+            })
+            .as_mut()
+            .map_err(|e| e.clone())?;
+        neural.prepare(device, &self.graded.as_ref().unwrap().view, size)
     }
     pub fn rtx_status(&mut self, device: &wgpu::Device) -> Result<(), String> {
         if let Some(error) = &self.rtx_error {
@@ -337,6 +395,9 @@ impl Resources {
         }
         let size = [frame.width, frame.height];
         let mode = settings.effective_mode(size, target);
+        if mode != UpscaleMode::Anime4k {
+            self.release_neural();
+        }
         if self.graded.as_ref().is_none_or(|t| t.size != size) {
             self.graded = Some(self.target(device, size, &self.spatial_uniform));
         }
@@ -413,13 +474,43 @@ impl Resources {
             UpscaleMode::Fsr1 => &self.easu,
             _ => &self.standard,
         };
-        render(
-            encoder,
-            &self.reconstructed.as_ref().unwrap().view,
-            pipeline,
-            &graded.bind,
-            "Spatial reconstruction",
-        );
+        if mode == UpscaleMode::Anime4k {
+            match self.prepare_neural(device, size) {
+                Ok(()) => {
+                    self.neural
+                        .as_ref()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .encode(encoder, &self.neural_target.as_ref().unwrap().view);
+                    render(
+                        encoder,
+                        &self.reconstructed.as_ref().unwrap().view,
+                        &self.standard,
+                        &self.neural_target.as_ref().unwrap().bind,
+                        "AI reconstruction to requested output size",
+                    );
+                }
+                Err(error) => {
+                    self.neural_error = Some(error);
+                    render(
+                        encoder,
+                        &self.reconstructed.as_ref().unwrap().view,
+                        &self.standard,
+                        &self.graded.as_ref().unwrap().bind,
+                        "AI unavailable: standard reconstruction",
+                    );
+                }
+            }
+        } else {
+            render(
+                encoder,
+                &self.reconstructed.as_ref().unwrap().view,
+                pipeline,
+                &graded.bind,
+                "Spatial reconstruction",
+            );
+        }
         if mode == UpscaleMode::Fsr1 {
             render(
                 encoder,
@@ -429,7 +520,9 @@ impl Resources {
                 "FSR RCAS",
             );
         }
-        self.last_mode = if mode == UpscaleMode::RtxVideo {
+        self.last_mode = if mode == UpscaleMode::RtxVideo
+            || (mode == UpscaleMode::Anime4k && self.neural_error.is_some())
+        {
             UpscaleMode::Standard
         } else {
             mode
@@ -497,7 +590,15 @@ impl Resources {
         }
     }
     pub fn error(&self) -> Option<&str> {
-        self.rtx_error.as_deref()
+        if self
+            .last_recipe
+            .as_ref()
+            .is_some_and(|r| r.settings.mode == UpscaleMode::Anime4k)
+        {
+            self.neural_error.as_deref()
+        } else {
+            self.rtx_error.as_deref()
+        }
     }
     fn output(&self) -> &Target {
         if self.last_mode == UpscaleMode::Fsr1 {
@@ -609,8 +710,8 @@ pub fn render_export(
         settings,
         target,
     );
-    if let Some(error) = &resources.rtx_error {
-        return Err(error.clone());
+    if let Some(error) = resources.error() {
+        return Err(error.to_owned());
     }
     readback(device, queue, encoder, &resources.output().texture, target)
 }

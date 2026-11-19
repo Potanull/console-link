@@ -17,6 +17,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     target = ["--target", args.target] if args.target else []
     commands = [["cargo", "fmt", "--check"]]
+    commands.append(["python3", "scripts/generate-neural-shader.py", "--check"])
     if args.core:
         commands.append(["cargo", "test", "--locked", "--no-default-features", "--lib", *target])
     elif args.full:

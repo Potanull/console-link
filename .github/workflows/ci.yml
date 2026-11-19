@@ -33,6 +33,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Verify pinned CNN shader generation
+        run: python3 scripts/generate-neural-shader.py --check
       - name: Validate package and bundle versions
         id: version
         run: |

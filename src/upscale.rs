@@ -6,6 +6,8 @@ pub enum UpscaleMode {
     Standard,
     Nis,
     Fsr1,
+    /// Small pretrained Anime4K 3D CNN; optional spatial reconstruction, not frame generation.
+    Anime4k,
     RtxVideo,
 }
 
@@ -89,6 +91,30 @@ pub fn rtx_quality_label(level: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn neural_mode_is_opt_in_persists_and_only_runs_when_enlarging() {
+        let legacy: UpscaleSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.mode, UpscaleMode::Standard);
+        let settings = UpscaleSettings {
+            mode: UpscaleMode::Anime4k,
+            ..legacy
+        };
+        let encoded = serde_json::to_string(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_str::<UpscaleSettings>(&encoded).unwrap(),
+            settings
+        );
+        for target in [[1920, 1080], [1280, 720], [2560, 1080], [1280, 1440]] {
+            assert_eq!(
+                settings.effective_mode([1920, 1080], target),
+                UpscaleMode::Standard
+            );
+        }
+        assert_eq!(
+            settings.effective_mode([1920, 1080], [3840, 2160]),
+            UpscaleMode::Anime4k
+        );
+    }
     #[test]
     fn output_resolution_preserves_aspect_ratio_and_legacy_default() {
         assert_eq!(

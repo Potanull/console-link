@@ -1,4 +1,6 @@
 use super::*;
+#[path = "neural_tests.rs"]
+mod neural_tests;
 use std::{
     future::Future,
     task::{Context, Poll, Wake, Waker},

@@ -138,7 +138,7 @@ impl Desktop {
         .child(ui_switch(
             cx,
             "original",
-            "Показать оригинал без цветокоррекции",
+            "Показать оригинал без обработки",
             self.original,
             |s, v| s.original = v,
         ))
@@ -196,6 +196,7 @@ impl Desktop {
             ("standard", UpscaleMode::Standard, "Стандартный"),
             ("nis", UpscaleMode::Nis, "NVIDIA NIS"),
             ("fsr1", UpscaleMode::Fsr1, "AMD FSR 1"),
+            ("anime4k", UpscaleMode::Anime4k, "AI 2x · экспериментальный"),
             ("rtx", UpscaleMode::RtxVideo, "RTX Video"),
         ];
         let selected = modes
@@ -264,7 +265,7 @@ impl Desktop {
         )
         .child(setting_control("Режим", mode_picker))
         .child(setting_control("Разрешение обработки", output_picker))
-        .child(hint("2K и 4K задают размер обработки NIS, FSR или RTX, сохраняя пропорции. Исходное разрешение карты не меняется. Авто снижает нагрузку в небольшом окне."));
+        .child(hint("2K и 4K задают размер обработки, сохраняя пропорции. Исходное разрешение карты не меняется. Авто снижает нагрузку в небольшом окне."));
         match upscale.mode {
             UpscaleMode::Nis => enhancements=enhancements.child(numeric(cx,"nis-sharp","Резкость NIS",upscale.nis_sharpness,0.,1.,|s,v|s.runtime.settings.upscale.nis_sharpness=v)),
             UpscaleMode::Fsr1 => enhancements=enhancements.child(numeric(cx,"fsr-sharp","Резкость FSR",upscale.fsr_sharpness,0.,1.,|s,v|s.runtime.settings.upscale.fsr_sharpness=v)),
@@ -275,6 +276,10 @@ impl Desktop {
             )))
                 .child(hint("1 — меньше нагрузка, 4 — максимальная обработка. Это уровень алгоритма, а не процент качества исходника."))
                 .child(hint("RTX Video требует Windows, совместимую NVIDIA RTX и установленный runtime. При недоступности используется стандартный режим.")),
+            UpscaleMode::Anime4k => enhancements = enhancements
+                .child(hint("Anime4K 3D CNN повышает четкость при увеличении до 2x. Работает локально на GPU Mac и Windows, без загрузки моделей."))
+                .child(hint("Экспериментальный режим для 3D-графики. Может усиливать контуры и артефакты карты захвата. Сравни результат на своей игре."))
+                .child(hint("Источник до 1080p, увеличение до 2x по каждой стороне. Для 1080p выбери 2K или 4K. В небольшом окне с Авто используется стандартный режим. FPS не повышается; нагрузка на GPU растет.")),
             UpscaleMode::Standard => {}
         }
         if let Some(recipe) = &self.recipe {

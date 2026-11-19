@@ -103,7 +103,12 @@ impl Desktop {
         if let Err(error) = window::set_application_icon(window) {
             eprintln!("Application icon: {error}");
         }
-        let runtime = Runtime::new(persistent);
+        let mut runtime = Runtime::new(persistent);
+        if synthetic && std::env::args().any(|a| a == "--smoke-ai") {
+            runtime.settings.upscale.mode = console_link::upscale::UpscaleMode::Anime4k;
+            runtime.settings.upscale.output_resolution =
+                console_link::upscale::OutputResolution::Uhd;
+        }
         let brand = brand_image();
         let startup_page = crate::argument("--ui-page");
         let page = match startup_page.as_deref() {
@@ -264,6 +269,14 @@ impl Desktop {
                 window.viewport_size(),
                 self.cursor.is_hidden()
             );
+            if let Some(renderer) = &self.renderer {
+                eprintln!(
+                    "GPUI_UPSCALE effective={:?} target={:?} warning={:?}",
+                    renderer.effective_settings().mode,
+                    renderer.effective_target(),
+                    renderer.warning()
+                );
+            }
         }
         if let Some(frame) = self.runtime.poll() {
             self.frame = Some(frame);
@@ -395,7 +408,7 @@ impl Desktop {
         };
         let color = self.runtime.settings.color;
         let mut settings = self.runtime.settings.upscale;
-        if self.comparison {
+        if self.comparison || self.original {
             settings.mode = console_link::upscale::UpscaleMode::Standard;
         }
         let original = self.original;

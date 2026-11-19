@@ -4,11 +4,14 @@ import argparse, os, pathlib, re, subprocess
 
 parser = argparse.ArgumentParser(description="Verify native GPU presentation and window modes.")
 parser.add_argument("executable", type=pathlib.Path)
+parser.add_argument("--ai", action="store_true", help="Exercise the experimental CNN at 1080p to 4K.")
 args = parser.parse_args()
 executable = args.executable
 log = pathlib.Path(os.environ.get('RUNNER_TEMP', 'dist')) / 'console-link-gpui-smoke.log'
 log.parent.mkdir(parents=True, exist_ok=True)
 arguments = [str(executable.resolve()), '--synthetic', '--smoke-cycle', '--smoke-seconds', '14']
+if args.ai:
+    arguments.append('--smoke-ai')
 try:
     result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", timeout=30)
 except subprocess.TimeoutExpired as error:
@@ -25,6 +28,10 @@ if result.returncode != 0:
 counters = re.findall(r'GPUI_SHUTDOWN presents=(\d+) gpu_readback_playback=0', result.stdout)
 if not counters or int(counters[-1]) <= 0:
     raise SystemExit('Native GPUI smoke did not confirm a presented GPU frame without playback readback')
+if args.ai:
+    upscales = [line for line in result.stdout.splitlines() if 'GPUI_UPSCALE' in line]
+    if not upscales or any('effective=Anime4k target=[3840, 2160] warning=None' not in line for line in upscales):
+        raise SystemExit('AI smoke did not confirm CNN presentation at 4K without fallback')
 for mode in ('Borderless', 'Fullscreen', 'Windowed'):
     if f'mode={mode}' not in result.stdout:
         raise SystemExit(f'Native smoke did not exercise {mode}')

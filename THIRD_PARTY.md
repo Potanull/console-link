@@ -1,5 +1,10 @@
 # Сторонние компоненты
 
+AI-апскейл: Anime4K 3DGraphics Upscale x2 US CNN, MIT, Copyright (c) 2019-2021 bloc97.
+Зафиксирован commit `7684e9586f8dcc738af08a1cdceb024cc184f426`; исходная модель с лицензией
+в `assets/models/anime4k-3d-x2-us.glsl`, порт WGSL в `src/gpu/`.
+Происхождение и ограничения: `docs/ai-upscale.md`.
+
 Иконки интерфейса: [Lucide](https://github.com/lucide-icons/lucide), ISC; унаследованные
 из Feather `check` и `chevron-down` также включают MIT notice. Исходники SVG и полный
 текст лицензии находятся в `assets/ui/`; уведомления включены в `THIRD_PARTY_LICENSES.txt`.

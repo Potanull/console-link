@@ -1,5 +1,6 @@
 //! Shared GPU video processing. Presentation never maps a GPU buffer to the CPU.
 pub mod color;
+mod neural;
 pub mod upscale;
 
 use crate::{
@@ -88,9 +89,12 @@ impl VideoRenderer {
         frame: Option<&Arc<VideoFrame>>,
         color: ColorSettings,
         original: bool,
-        settings: UpscaleSettings,
+        mut settings: UpscaleSettings,
         viewport: [f32; 4],
     ) -> Result<(), String> {
+        if original {
+            settings.mode = UpscaleMode::Standard;
+        }
         self.warning = None;
         let target = [
             viewport[2].round().max(1.0) as u32,
@@ -104,6 +108,12 @@ impl VideoRenderer {
         });
         let mut effective = settings;
         effective.mode = UpscaleMode::Standard;
+        if frame.is_none_or(|frame| {
+            settings.effective_mode([frame.width, frame.height], target) != UpscaleMode::Anime4k
+        }) && let Some(Ok(spatial)) = self.spatial.as_mut()
+        {
+            spatial.release_neural();
+        }
         let enhanced = if let Some(frame) = frame {
             // Invalid input remains an error. Unsupported enhancement must never
             // stop an otherwise valid ordinary video stream.
@@ -134,11 +144,12 @@ impl VideoRenderer {
                         spatial.update(
                             device, queue, encoder, frame, color, original, settings, target,
                         );
-                        let failure = if mode == UpscaleMode::RtxVideo {
-                            spatial.error().map(str::to_owned)
-                        } else {
-                            None
-                        };
+                        let failure =
+                            if matches!(mode, UpscaleMode::RtxVideo | UpscaleMode::Anime4k) {
+                                spatial.error().map(str::to_owned)
+                            } else {
+                                None
+                            };
                         if let Some(error) = failure {
                             self.warning = Some(error);
                             false
